@@ -1,0 +1,13 @@
+YarnTales final integrated frontend
+
+This is a React + Vite frontend connected to the Flask backend.
+
+1. Create frontend/.env from frontend/.env.example.
+2. Set:
+   VITE_USE_BACKEND=true
+   VITE_API_BASE_URL=http://localhost:5000
+3. From frontend:
+   npm install
+   npm run dev
+
+The UI/design and existing YarnTales assets are retained; API/state integration is handled in src/services/api.js and src/App.jsx.
