@@ -21,6 +21,7 @@ import {
   clearSession,
 } from './services/api'
 import './App.css'
+import { resolveAsset } from './services/assets'
 
 const IG_URL = 'https://www.instagram.com/yarntalesbyaniiii/?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw=='
 const money = (value) => `₹${Number(value).toLocaleString('en-IN')}`
@@ -258,23 +259,13 @@ function App() {
     }
   }
 
-  const handlePlaceOrder = async (orderDetails) => {
-    if (!currentUserId || cart.length === 0) return false
-
-    const {
-      paymentMethod = 'UPI',
-      paymentStatus = paymentMethod === 'Cash on Delivery' ? 'pending' : 'paid',
-      paymentReference = null,
-      ...shippingAddress
-    } = orderDetails
+  const handlePlaceOrder = async (shippingAddress) => {
+    if (!currentUserId || cart.length === 0) return
 
     try {
       const result = await createOrder({
         userId: currentUserId,
         shippingAddress,
-        paymentMethod,
-        paymentStatus,
-        paymentReference,
         items: cart.map((item) => ({
           productId: item.id,
           quantity: item.quantity,
@@ -286,10 +277,8 @@ function App() {
       setCart([])
       notify('Order placed ♡')
       navigate('tracking')
-      return true
     } catch (error) {
       notify(error.message || 'Unable to place order')
-      return false
     }
   }
 
@@ -488,10 +477,10 @@ function AuthScreen({ mode, setMode, onSubmit }) {
     <main className="auth-page">
       <section className="auth-visual">
         <div className="auth-collage">
-          <img src="/src/assets/flower-bookmark.jpg" alt="" />
-          <img src="/src/assets/black-yellow-bow-bag.jpg" alt="" />
-          <img src="/src/assets/sunflower-keychain.jpg" alt="" />
-          <img src="/src/assets/lavender-wave-tote.jpg" alt="" />
+          <img src={resolveAsset("/src/assets/flower-bookmark.jpg")} alt="" />
+          <img src={resolveAsset("/src/assets/black-yellow-bow-bag.jpg")} alt="" />
+          <img src={resolveAsset("/src/assets/sunflower-keychain.jpg")} alt="" />
+          <img src={resolveAsset("/src/assets/lavender-wave-tote.jpg")} alt="" />
         </div>
         <div className="auth-overlay" />
         <div className="auth-visual-copy">
@@ -610,10 +599,10 @@ function HomePage({ navigate, wishlist, addToCart, toggleWishlist, openProduct }
         </div>
 
         <div className="hero-photo-grid">
-          <div className="hero-photo tall"><img src="/src/assets/black-yellow-bow-bag.jpg" alt="Crochet black and yellow bow bag" /><span>the bow girl ♡</span></div>
-          <div className="hero-photo"><img src="/src/assets/flower-bookmark.jpg" alt="Floral crochet bookmark" /></div>
-          <div className="hero-photo"><img src="/src/assets/cherry-keychain.jpg" alt="Crochet cherry keychain" /></div>
-          <div className="hero-photo"><img src="/src/assets/navy-daisy-fringe-bag.jpg" alt="Navy crochet fringe bag" /></div>
+          <div className="hero-photo tall"><img src={resolveAsset("/src/assets/black-yellow-bow-bag.jpg")} alt="Crochet black and yellow bow bag" /><span>the bow girl ♡</span></div>
+          <div className="hero-photo"><img src={resolveAsset("/src/assets/flower-bookmark.jpg")} alt="Floral crochet bookmark" /></div>
+          <div className="hero-photo"><img src={resolveAsset("/src/assets/cherry-keychain.jpg")} alt="Crochet cherry keychain" /></div>
+          <div className="hero-photo"><img src={resolveAsset("/src/assets/navy-daisy-fringe-bag.jpg")} alt="Navy crochet fringe bag" /></div>
           <div className="hero-sticker">tiny details<br /><b>big feelings</b></div>
         </div>
       </section>
@@ -656,7 +645,7 @@ function HomePage({ navigate, wishlist, addToCart, toggleWishlist, openProduct }
 
       <section className="story-strip">
         <div className="story-photo">
-          <img src="/src/assets/black-flower-scarf-flat.jpg" alt="Handmade black and cream crochet scarf" />
+          <img src={resolveAsset("/src/assets/black-flower-scarf-flat.jpg")} alt="Handmade black and cream crochet scarf" />
         </div>
         <div className="story-copy">
           <span className="eyebrow">✦ WHY YARNTales</span>
@@ -708,10 +697,10 @@ function HomePage({ navigate, wishlist, addToCart, toggleWishlist, openProduct }
 
         <div className="insta-grid">
           {[
-            '/src/assets/flower-bookmark.jpg',
-            '/src/assets/cherry-keychain.jpg',
-            '/src/assets/black-yellow-bow-bag.jpg',
-            '/src/assets/sunflower-keychain.jpg',
+            resolveAsset('/src/assets/flower-bookmark.jpg'),
+            resolveAsset('/src/assets/cherry-keychain.jpg'),
+            resolveAsset('/src/assets/black-yellow-bow-bag.jpg'),
+            resolveAsset('/src/assets/sunflower-keychain.jpg'),
           ].map((src, index) => <img key={src} src={src} alt={`YarnTales Instagram preview ${index + 1}`} />)}
         </div>
       </section>
@@ -837,7 +826,7 @@ function CustomPage({ notify, onAddCustom }) {
 
   const customColours = ['Lavender', 'Blush Pink', 'Butter Yellow', 'Mint', 'Baby Blue', 'Cream']
   const size = 'Standard'
-  const previewImage = '/src/assets/lavender-wave-tote.jpg'
+  const previewImage = resolveAsset('/src/assets/lavender-wave-tote.jpg')
 
   return (
     <main className="page-section">
@@ -943,17 +932,6 @@ function CheckoutPage({ cart, cartTotal, navigate, notify, onPlaceOrder }) {
   const [city, setCity] = useState('')
   const [pincode, setPincode] = useState('')
   const [payment, setPayment] = useState('UPI')
-  const [showUpiPayment, setShowUpiPayment] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-
-  const deliveryDetails = () => ({
-    name: name.trim(),
-    phone: phone.trim(),
-    address: address.trim(),
-    city: city.trim(),
-    pincode: pincode.trim(),
-    state: 'Maharashtra',
-  })
 
   const submitOrder = async () => {
     if (!name.trim() || !phone.trim() || !address.trim() || !city.trim() || !pincode.trim()) {
@@ -961,31 +939,15 @@ function CheckoutPage({ cart, cartTotal, navigate, notify, onPlaceOrder }) {
       return
     }
 
-    if (payment === 'UPI') {
-      setShowUpiPayment(true)
-      return
-    }
-
-    setSubmitting(true)
     await onPlaceOrder({
-      ...deliveryDetails(),
+      name: name.trim(),
+      phone: phone.trim(),
+      address: address.trim(),
+      city: city.trim(),
+      pincode: pincode.trim(),
+      state: 'Maharashtra',
       paymentMethod: payment,
-      paymentStatus: payment === 'Cash on Delivery' ? 'pending' : 'paid',
-      paymentReference: payment === 'Cash on Delivery' ? null : `SIM-${payment.toUpperCase().replaceAll(' ', '-')}-${Date.now()}`,
     })
-    setSubmitting(false)
-  }
-
-  const confirmUpiPayment = async () => {
-    setSubmitting(true)
-    const success = await onPlaceOrder({
-      ...deliveryDetails(),
-      paymentMethod: 'UPI',
-      paymentStatus: 'paid',
-      paymentReference: `SIM-UPI-${Date.now()}`,
-    })
-    setSubmitting(false)
-    if (success) setShowUpiPayment(false)
   }
 
   return (
@@ -1023,61 +985,9 @@ function CheckoutPage({ cart, cartTotal, navigate, notify, onPlaceOrder }) {
           {cart.map((item) => <div className="summary-item" key={item.id}><span>{item.name} × {item.quantity}</span><b>{money(item.price * item.quantity)}</b></div>)}
           <hr />
           <div className="summary-total"><span>Total</span><b>{money(cartTotal)}</b></div>
-          <button className="primary-cta fill" onClick={submitOrder} disabled={submitting}>
-            {submitting ? 'Processing…' : 'Place Order'}
-          </button>
+          <button className="primary-cta fill" onClick={submitOrder}>Place Order</button>
         </aside>
       </div>
-
-      {showUpiPayment && (
-        <div className="simulated-payment-overlay" role="dialog" aria-modal="true" aria-labelledby="upi-payment-title">
-          <div className="simulated-payment-modal">
-            <button
-              className="simulated-payment-close"
-              onClick={() => !submitting && setShowUpiPayment(false)}
-              aria-label="Close payment dialog"
-              disabled={submitting}
-            >
-              ×
-            </button>
-            <span className="eyebrow">✦ UPI PAYMENT</span>
-            <h2 id="upi-payment-title">Pay {money(cartTotal)}</h2>
-            <p className="simulated-payment-note">This is a simulated UPI payment for the YarnTales project. No real money will be charged.</p>
-
-            <div className="simulated-qr" aria-label="Simulated UPI QR code">
-              <span className="qr-corner qr-corner-a" />
-              <span className="qr-corner qr-corner-b" />
-              <span className="qr-corner qr-corner-c" />
-              <span className="qr-block qr-block-1" />
-              <span className="qr-block qr-block-2" />
-              <span className="qr-block qr-block-3" />
-              <span className="qr-block qr-block-4" />
-              <span className="qr-block qr-block-5" />
-              <span className="qr-block qr-block-6" />
-              <span className="qr-block qr-block-7" />
-              <span className="qr-block qr-block-8" />
-              <span className="qr-block qr-block-9" />
-              <span className="qr-block qr-block-10" />
-              <span className="qr-block qr-block-11" />
-              <span className="qr-block qr-block-12" />
-              <span className="qr-block qr-block-13" />
-              <span className="qr-block qr-block-14" />
-              <span className="qr-block qr-block-15" />
-              <span className="qr-label">DEMO</span>
-            </div>
-
-            <div className="simulated-upi-hint">
-              <b>UPI</b>
-              <span>Scan & pay in a real UPI app is not enabled for this demo.</span>
-            </div>
-
-            <button className="primary-cta fill" onClick={confirmUpiPayment} disabled={submitting}>
-              {submitting ? 'Confirming payment…' : 'Simulate Payment ✓'}
-            </button>
-            <button className="text-button simulated-cancel" onClick={() => setShowUpiPayment(false)} disabled={submitting}>Cancel</button>
-          </div>
-        </div>
-      )}
     </main>
   )
 }

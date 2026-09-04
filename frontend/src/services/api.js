@@ -1,23 +1,11 @@
+import { resolveAsset } from './assets'
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '')
 const USE_BACKEND = import.meta.env.VITE_USE_BACKEND !== 'false'
-
-const assetUrls = import.meta.glob('../assets/*.{png,jpg,jpeg,webp,svg}', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-})
 
 const getToken = () => localStorage.getItem('yarntales-token') || ''
 
 const getUserId = (user) => user?.userId || user?.id || ''
-
-const resolveAsset = (value) => {
-  if (!value) return ''
-  if (/^https?:\/\//i.test(value) || value.startsWith('data:')) return value
-  const fileName = value.split('/').pop()
-  const match = Object.entries(assetUrls).find(([key]) => key.endsWith(`/${fileName}`))
-  return match?.[1] || value
-}
 
 const normalizeUser = (user) => ({
   ...user,
