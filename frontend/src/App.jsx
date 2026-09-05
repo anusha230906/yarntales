@@ -190,16 +190,48 @@ function App() {
     if (!currentUserId || !product?.id) return
 
     try {
+      // Normal storefront products live in catalogProducts. The hidden
+      // Custom Builder product does not, so use the product passed in
+      // whenever it already has a real MongoDB ObjectId.
+      let backendProduct = catalogProducts.find(
+        (item) => String(item.id) === String(product.id),
+      )
+
+      const directProductId = product?.id || product?._id
+      const directLooksLikeMongoId = /^[0-9a-f]{24}$/i.test(String(directProductId || ''))
+      const catalogLooksLikeMongoId = /^[0-9a-f]{24}$/i.test(String(backendProduct?.id || ''))
+
+      if (!backendProduct && directLooksLikeMongoId) {
+        backendProduct = product
+      }
+
+      if (!backendProduct || (!directLooksLikeMongoId && !catalogLooksLikeMongoId)) {
+        const freshProducts = await getProducts()
+        catalogProducts = freshProducts
+        setCatalogVersion((value) => value + 1)
+        backendProduct = freshProducts.find(
+          (item) =>
+            String(item.id) === String(product.id) ||
+            item.name === product.name,
+        )
+      }
+
+      const backendProductId = backendProduct?.id || backendProduct?._id || directProductId
+
+      if (!backendProductId || !/^[0-9a-f]{24}$/i.test(String(backendProductId))) {
+        throw new Error('This product is still loading. Please try Add to Cart again.')
+      }
+
       await addCartItem({
         userId: currentUserId,
-        productId: product.id,
+        productId: String(backendProductId),
         quantity,
         customizationId,
       })
 
       const cartData = await getCart(currentUserId)
       setCart(hydrateCart(cartData))
-      notify(`${product.name} added to cart 🧶`)
+      notify(`${product.name || backendProduct?.name || 'Item'} added to cart 🧶`)
     } catch (error) {
       notify(error.message || 'Unable to add to cart')
     }
