@@ -5,11 +5,13 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
-
+load_dotenv(BASE_DIR / ".env", override=True)
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "yarntales")
 SECRET_KEY = os.getenv("SECRET_KEY")
+
+RAZORPAY_KEY_ID = os.getenv("rzp_test_TY5Vc7w072jodU")
+RAZORPAY_KEY_SECRET = os.getenv("NumazcbzCc0dwDmfEnclthar")
 
 if not MONGO_URI:
     raise RuntimeError("MONGO_URI is required in backend/.env")

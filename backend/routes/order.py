@@ -4,7 +4,20 @@ from bson import ObjectId
 from uuid import uuid4
 from datetime import datetime, timezone
 
+import razorpay
+from config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+
+
 order_bp = Blueprint("order", __name__)
+
+
+# -------------------------------------------------
+# RAZORPAY CLIENT
+# -------------------------------------------------
+
+razorpay_client = razorpay.Client(
+    auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
+)
 
 
 # -------------------------------------------------
@@ -40,7 +53,214 @@ def find_user(user_id):
 
 
 # -------------------------------------------------
-# CREATE ORDER
+# CALCULATE ORDER TOTAL
+# -------------------------------------------------
+
+def calculate_order_items(items):
+
+    if not isinstance(items, list):
+        return None, None, {
+            "message": "items must be an array"
+        }
+
+    if len(items) == 0:
+        return None, None, {
+            "message": "Order must contain at least one item"
+        }
+
+    order_items = []
+    total = 0
+
+    for item in items:
+
+        if not isinstance(item, dict):
+            return None, None, {
+                "message": "Each order item must be an object"
+            }
+
+        product_id = item.get("productId")
+        quantity = item.get("quantity", 1)
+
+        if not product_id:
+            return None, None, {
+                "message": "Each item must contain productId"
+            }
+
+        try:
+            product_object_id = ObjectId(product_id)
+
+        except Exception:
+            return None, None, {
+                "message": "Invalid product ID"
+            }
+
+        product = db.products.find_one({
+            "_id": product_object_id
+        })
+
+        if not product:
+            return None, None, {
+                "message": "Product not found",
+                "productId": product_id
+            }
+
+        try:
+            quantity = int(quantity)
+
+        except (ValueError, TypeError):
+            return None, None, {
+                "message": "Quantity must be a number"
+            }
+
+        if quantity <= 0:
+            return None, None, {
+                "message": "Quantity must be greater than 0"
+            }
+
+        price = float(product.get("basePrice", 0))
+
+        if price <= 0:
+            return None, None, {
+                "message": "Product price must be greater than 0"
+            }
+
+        subtotal = price * quantity
+
+        order_items.append({
+            "productId": product_object_id,
+            "quantity": quantity,
+            "subtotal": subtotal
+        })
+
+        total += subtotal
+
+    return order_items, total, None
+
+
+# -------------------------------------------------
+# CREATE RAZORPAY PAYMENT ORDER
+# -------------------------------------------------
+
+@order_bp.route("/api/payment/create", methods=["POST"])
+def create_razorpay_payment():
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "message": "Request body is required"
+        }), 400
+
+    user_id = data.get("userId")
+    items = data.get("items")
+
+    if not user_id:
+        return jsonify({
+            "message": "userId is required"
+        }), 400
+
+    user = find_user(user_id)
+
+    if not user:
+        return jsonify({
+            "message": "User not found"
+        }), 404
+
+    order_items, total, error = calculate_order_items(items)
+
+    if error:
+        return jsonify(error), 400
+
+    # Razorpay amount is always in the smallest currency unit.
+    # For INR, this means paise.
+    amount_in_paise = int(round(total * 100))
+
+    try:
+
+        razorpay_order = razorpay_client.order.create({
+            "amount": amount_in_paise,
+            "currency": "INR",
+            "receipt": str(uuid4()),
+            "notes": {
+                "userId": user_id
+            }
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "message": "Unable to create Razorpay payment order",
+            "error": str(e)
+        }), 500
+
+    return jsonify({
+        "message": "Razorpay payment order created",
+        "keyId": RAZORPAY_KEY_ID,
+        "razorpayOrderId": razorpay_order["id"],
+        "amount": amount_in_paise,
+        "currency": "INR",
+        "total": total
+    }), 201
+
+
+# -------------------------------------------------
+# VERIFY RAZORPAY PAYMENT
+# -------------------------------------------------
+
+@order_bp.route("/api/payment/verify", methods=["POST"])
+def verify_razorpay_payment():
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "message": "Request body is required"
+        }), 400
+
+    razorpay_order_id = data.get("razorpay_order_id")
+    razorpay_payment_id = data.get("razorpay_payment_id")
+    razorpay_signature = data.get("razorpay_signature")
+
+    if not razorpay_order_id:
+        return jsonify({
+            "message": "razorpay_order_id is required"
+        }), 400
+
+    if not razorpay_payment_id:
+        return jsonify({
+            "message": "razorpay_payment_id is required"
+        }), 400
+
+    if not razorpay_signature:
+        return jsonify({
+            "message": "razorpay_signature is required"
+        }), 400
+
+    try:
+
+        razorpay_client.utility.verify_payment_signature({
+            "razorpay_order_id": razorpay_order_id,
+            "razorpay_payment_id": razorpay_payment_id,
+            "razorpay_signature": razorpay_signature
+        })
+
+        return jsonify({
+            "message": "Payment signature verified successfully",
+            "verified": True,
+            "paymentId": razorpay_payment_id,
+            "razorpayOrderId": razorpay_order_id
+        }), 200
+
+    except Exception:
+
+        return jsonify({
+            "message": "Payment signature verification failed",
+            "verified": False
+        }), 400
+
+
+# -------------------------------------------------
+# CREATE YARNTales ORDER
 # -------------------------------------------------
 
 @order_bp.route("/api/orders", methods=["POST"])
@@ -60,142 +280,79 @@ def create_order():
     payment_reference = data.get("paymentReference")
     items = data.get("items")
 
-    allowed_payment_methods = ["UPI", "Card", "Cash on Delivery"]
+    allowed_payment_methods = [
+        "UPI",
+        "Card",
+        "Cash on Delivery"
+    ]
+
     if payment_method not in allowed_payment_methods:
+
         return jsonify({
             "message": "Invalid payment method",
             "allowedPaymentMethods": allowed_payment_methods
         }), 400
 
-    # Payment is intentionally simulated for this college project.
-    # UPI/Card are treated as paid after the frontend confirmation step;
-    # Cash on Delivery remains pending.
-    expected_payment_status = "pending" if payment_method == "Cash on Delivery" else "paid"
-    payment_status = expected_payment_status
+    # -------------------------------------------------
+    # USER
+    # -------------------------------------------------
 
-    # Check user ID
     if not user_id:
+
         return jsonify({
             "message": "userId is required"
         }), 400
 
-    # Check shipping address
-    if not shipping_address:
-        return jsonify({
-            "message": "shippingAddress is required"
-        }), 400
-
-    # Check items
-    if not isinstance(items, list):
-        return jsonify({
-            "message": "items must be an array"
-        }), 400
-
-    if len(items) == 0:
-        return jsonify({
-            "message": "Order must contain at least one item"
-        }), 400
-
-    # -------------------------------------------------
-    # FIND USER
-    # -------------------------------------------------
-
     user = find_user(user_id)
 
     if not user:
+
         return jsonify({
             "message": "User not found"
         }), 404
 
-    order_items = []
-    total = 0
-
     # -------------------------------------------------
-    # PROCESS ORDER ITEMS
+    # SHIPPING ADDRESS
     # -------------------------------------------------
 
-    for item in items:
+    if not shipping_address:
 
-        if not isinstance(item, dict):
-            return jsonify({
-                "message": "Each order item must be an object"
-            }), 400
+        return jsonify({
+            "message": "shippingAddress is required"
+        }), 400
 
-        product_id = item.get("productId")
-        quantity = item.get("quantity", 1)
+    # -------------------------------------------------
+    # ORDER ITEMS
+    # -------------------------------------------------
 
-        # Product ID required
-        if not product_id:
-            return jsonify({
-                "message": "Each item must contain productId"
-            }), 400
+    order_items, total, error = calculate_order_items(items)
 
-        # Convert product ID to ObjectId
-        try:
-            product_object_id = ObjectId(product_id)
+    if error:
 
-        except Exception:
-            return jsonify({
-                "message": "Invalid product ID"
-            }), 400
+        return jsonify(error), 400
 
-        # Find product
-        product = db.products.find_one({
-            "_id": product_object_id
-        })
+    # -------------------------------------------------
+    # PAYMENT STATUS
+    # -------------------------------------------------
 
-        if not product:
-            return jsonify({
-                "message": "Product not found",
-                "productId": product_id
-            }), 404
+    if payment_method == "Cash on Delivery":
 
-        # Validate quantity
-        try:
-            quantity = int(quantity)
+        payment_status = "pending"
 
-        except (ValueError, TypeError):
-            return jsonify({
-                "message": "Quantity must be a number"
-            }), 400
+    else:
 
-        if quantity <= 0:
-            return jsonify({
-                "message": "Quantity must be greater than 0"
-            }), 400
+        # For Razorpay payments, the frontend must only
+        # send "paid" after successful server verification.
+        if payment_status != "paid":
 
-        # Get product price
-        price = float(product.get("basePrice", 0))
-
-        if price <= 0:
-            return jsonify({
-                "message": "Product price must be greater than 0"
-            }), 400
-
-        # Calculate subtotal
-        subtotal = price * quantity
-
-        # -------------------------------------------------
-        # IMPORTANT:
-        # MongoDB validator requires:
-        # productId
-        # quantity
-        # subtotal
-        # -------------------------------------------------
-
-        order_items.append({
-            "productId": product_object_id,
-            "quantity": quantity,
-            "subtotal": subtotal
-        })
-
-        total += subtotal
+            payment_status = "pending"
 
     # -------------------------------------------------
     # CREATE ORDER
     # -------------------------------------------------
 
     order = {
+
         "orderId": str(uuid4()),
 
         # MongoDB expects the actual User ObjectId
@@ -207,13 +364,13 @@ def create_order():
         # Total order amount
         "total": total,
 
-        # Required status value
+        # Required tracking status
         "status": "order_confirmed",
 
         # Shipping information
         "shippingAddress": shipping_address,
 
-        # Simulated payment details
+        # Payment information
         "paymentMethod": payment_method,
         "paymentStatus": payment_status,
         "paymentReference": payment_reference,
@@ -229,7 +386,6 @@ def create_order():
 
     db.orders.insert_one(order)
 
-    # Convert ObjectIds before returning JSON
     order = convert_object_ids(order)
 
     return jsonify({
@@ -248,6 +404,7 @@ def get_user_orders(user_id):
     user = find_user(user_id)
 
     if not user:
+
         return jsonify({
             "message": "User not found"
         }), 404
@@ -277,6 +434,7 @@ def get_order(order_id):
     })
 
     if not order:
+
         return jsonify({
             "message": "Order not found"
         }), 404
