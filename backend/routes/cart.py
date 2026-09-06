@@ -136,6 +136,21 @@ def get_cart(user_id):
             item["unitPrice"] = float(product.get("basePrice", 0))
             item["images"] = product.get("images", [])
 
+        # For a customized piece, prefer the preview image captured at
+        # customization time (it reflects the shape/base the shopper
+        # actually picked, e.g. Mini Bag vs Pouch vs Keychain).
+        customization_id = item.get("customizationId")
+        if customization_id:
+            customization = db.customizations.find_one({
+                "customizationId": customization_id
+            })
+
+            if customization:
+                if customization.get("previewImage"):
+                    item["images"] = [customization["previewImage"]]
+                if customization.get("base"):
+                    item["variantLabel"] = customization["base"]
+
         enriched.append(item)
 
     return jsonify({

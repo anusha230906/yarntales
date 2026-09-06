@@ -53,16 +53,24 @@ function App() {
   const currentUserId = user?.userId || user?.id || ''
 
   const hydrateCart = (items) => (items || []).map((item) => {
+    // Custom pieces are built from a hidden template product that never
+    // ships to the storefront catalog, so it won't be found here — that's
+    // expected, not a bug. We fall back to whatever image the backend sent
+    // for this specific cart line (it may be the customization's own
+    // preview image, e.g. Mini Bag vs Pouch vs Keychain).
     const product = catalogProducts.find((candidate) => candidate.id === String(item.productId))
+    const rawFallbackImage = item.images?.[0] || ''
 
     return {
       ...(product || {
         id: String(item.productId),
-        name: item.productName || 'YarnTales Product',
+        name: item.customizationId
+          ? `Custom ${item.variantLabel || 'Crochet Piece'}`
+          : (item.productName || 'YarnTales Product'),
         category: item.category || 'Handmade',
         price: Number(item.unitPrice || 0),
-        image: item.images?.[0] || '',
-        gallery: item.images || [],
+        image: resolveAsset(rawFallbackImage),
+        gallery: rawFallbackImage ? [resolveAsset(rawFallbackImage)] : [],
         colors: [],
         rating: 4.9,
         reviews: 0,
@@ -71,8 +79,8 @@ function App() {
       id: String(item.productId),
       name: product?.name || item.productName || 'YarnTales Product',
       category: product?.category || item.category || 'Handmade',
-      image: product?.image || item.images?.[0] || '',
-      gallery: product?.gallery || item.images || [],
+      image: product?.image || resolveAsset(rawFallbackImage) || '',
+      gallery: product?.gallery || (rawFallbackImage ? [resolveAsset(rawFallbackImage)] : []),
       price: Number(product?.price ?? item.unitPrice ?? 0),
       quantity: Number(item.quantity || 1),
       customizationId: item.customizationId || null,
@@ -267,7 +275,7 @@ function App() {
     setCart([])
   }
 
-  const handleCustomAdd = async ({ productId, color, size, detail, personalizedName }) => {
+  const handleCustomAdd = async ({ productId, base, color, size, detail, personalizedName, previewImage }) => {
     if (!currentUserId || !productId) return
 
     try {
@@ -279,6 +287,8 @@ function App() {
         features: [detail],
         accessory: detail,
         personalizedName: personalizedName || null,
+        base,
+        previewImage,
       })
 
       await addToCart(
@@ -471,6 +481,7 @@ function App() {
             }}
             navigate={navigate}
             onGiftRequest={handleGiftRequest}
+            setCategoryFilter={setCategoryFilter}
           />
         )}
 
@@ -539,6 +550,15 @@ function App() {
             orderCount={orders.length}
             navigate={navigate}
             signOut={signOut}
+          />
+        )}
+
+        {view === 'settings' && (
+          <AccountSettingsPage
+            user={user}
+            setUser={setUser}
+            navigate={navigate}
+            notify={notify}
           />
         )}
       </div>
@@ -1143,6 +1163,45 @@ function ShopPage({
     'Wearables',
   ]
 
+  const priceRanges = [
+    { label: 'Under ₹1,000', test: (price) => price < 1000 },
+    { label: '₹1,000–₹1,500', test: (price) => price >= 1000 && price <= 1500 },
+    { label: '₹1,500+', test: (price) => price > 1500 },
+  ]
+
+  const colourSwatches = [
+    { className: 's-lavender', label: 'Lavender' },
+    { className: 's-pink', label: 'Pink' },
+    { className: 's-yellow', label: 'Yellow' },
+    { className: 's-mint', label: 'Mint' },
+    { className: 's-blue', label: 'Blue' },
+  ]
+
+  const [activePriceRanges, setActivePriceRanges] = useState([])
+  const [activeColours, setActiveColours] = useState([])
+
+  const togglePriceRange = (label) => {
+    setActivePriceRanges((current) =>
+      current.includes(label)
+        ? current.filter((item) => item !== label)
+        : [...current, label]
+    )
+  }
+
+  const toggleColour = (label) => {
+    setActiveColours((current) =>
+      current.includes(label)
+        ? current.filter((item) => item !== label)
+        : [...current, label]
+    )
+  }
+
+  const clearAllFilters = () => {
+    setCategoryFilter('All')
+    setActivePriceRanges([])
+    setActiveColours([])
+  }
+
   const list = catalogProducts.filter((product) => {
     const categoryOk =
       categoryFilter === 'All' ||
@@ -1154,7 +1213,17 @@ function ShopPage({
         .toLowerCase()
         .includes(search.trim().toLowerCase())
 
-    return categoryOk && searchOk
+    const priceOk =
+      !activePriceRanges.length ||
+      priceRanges
+        .filter((range) => activePriceRanges.includes(range.label))
+        .some((range) => range.test(product.price))
+
+    const colourOk =
+      !activeColours.length ||
+      activeColours.some((colour) => (product.colors || []).includes(colour))
+
+    return categoryOk && searchOk && priceOk && colourOk
   })
 
   return (
@@ -1198,36 +1267,37 @@ function ShopPage({
 
           <span>Price</span>
 
-          <label>
-            <input type="checkbox" />
-            Under ₹1,000
-          </label>
-
-          <label>
-            <input type="checkbox" />
-            ₹1,000–₹1,500
-          </label>
-
-          <label>
-            <input type="checkbox" />
-            ₹1,500+
-          </label>
+          {priceRanges.map((range) => (
+            <label key={range.label}>
+              <input
+                type="checkbox"
+                checked={activePriceRanges.includes(range.label)}
+                onChange={() => togglePriceRange(range.label)}
+              />
+              {range.label}
+            </label>
+          ))}
 
           <span>Colours</span>
 
           <div className="swatches">
-            <i className="s-lavender" />
-            <i className="s-pink" />
-            <i className="s-yellow" />
-            <i className="s-mint" />
-            <i className="s-blue" />
+            {colourSwatches.map((swatch) => (
+              <i
+                key={swatch.className}
+                className={`${swatch.className}${activeColours.includes(swatch.label) ? ' selected' : ''}`}
+                title={swatch.label}
+                onClick={() => toggleColour(swatch.label)}
+                role="button"
+                aria-pressed={activeColours.includes(swatch.label)}
+              />
+            ))}
           </div>
 
           <span>Need help?</span>
 
           <button
             className="mini-link"
-            onClick={() => setCategoryFilter('All')}
+            onClick={clearAllFilters}
           >
             Clear filters
           </button>
@@ -1452,9 +1522,17 @@ function CustomPage({ notify, onAddCustom }) {
 
   const size = 'Standard'
 
-  const previewImage = resolveAsset(
-    '/src/assets/lavender-wave-tote.jpg'
-  )
+  // Each base shape gets its own reference photo so the live preview (and
+  // later the cart) actually shows what was picked, instead of always
+  // showing the same tote image regardless of selection.
+  const baseImagePaths = {
+    'Mini Bag': '/src/assets/lavender-wave-tote.jpg',
+    'Pouch': '/src/assets/golden-tie-pouch.jpg',
+    'Keychain': '/src/assets/lavender-flower-keychain.jpg',
+  }
+
+  const rawPreviewPath = baseImagePaths[base] || baseImagePaths['Mini Bag']
+  const previewImage = resolveAsset(rawPreviewPath)
 
   return (
     <main className="page-section">
@@ -1559,10 +1637,12 @@ function CustomPage({ notify, onAddCustom }) {
 
                 onAddCustom({
                   productId: template.id,
+                  base,
                   color: colour,
                   size,
                   detail,
                   personalizedName: note,
+                  previewImage: rawPreviewPath,
                 })
               }}
             >
@@ -1583,17 +1663,28 @@ function GiftPage({
   openProduct,
   navigate,
   onGiftRequest,
+  setCategoryFilter,
 }) {
   const [recipient, setRecipient] = useState('For Her')
   const [occasion, setOccasion] = useState('Birthday')
   const [budget, setBudget] = useState('₹2,000')
+  const [category, setCategory] = useState('All')
 
-  const picks =
-    occasion === 'Anniversary'
-      ? catalogProducts.slice(11, 14)
-      : recipient === 'For Baby'
-        ? catalogProducts.slice(1, 4)
-        : catalogProducts.slice(0, 3)
+  const giftCategories = ['All', ...categories.map((item) => item.title)]
+
+  // "₹5,000+" has no upper bound; every other tier is a maximum spend.
+  const numericBudget = Number(budget.replace(/[^0-9]/g, '')) || 2000
+  const isOpenEnded = budget === '₹5,000+'
+
+  const picks = catalogProducts.filter((product) => {
+    const withinBudget = isOpenEnded
+      ? product.price >= numericBudget
+      : product.price <= numericBudget
+
+    const matchesCategory = category === 'All' || product.category === category
+
+    return withinBudget && matchesCategory
+  })
 
   return (
     <main className="page-section">
@@ -1674,27 +1765,42 @@ function GiftPage({
           </div>
         </BuilderStep>
 
+        <BuilderStep number="04" title="Pick a category">
+          <div className="choice-row wrap">
+            {giftCategories.map((item) => (
+              <button
+                key={item}
+                className={category === item ? 'selected' : ''}
+                onClick={() => setCategory(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </BuilderStep>
+
         <div className="gift-picks">
           <div className="gift-picks-head">
             <div>
               <h2>Your picks</h2>
               <p>
-                {recipient} · {occasion} · {budget}
+                {recipient} · {occasion} · {category === 'All' ? 'Any category' : category} · {isOpenEnded ? '₹5,000+' : `Up to ${budget}`}
               </p>
             </div>
 
             <button
               className="soft-cta"
               onClick={() => {
-                const numericBudget =
-                  Number(budget.replace(/[^0-9]/g, '')) || 2000
-
                 onGiftRequest?.({
                   occasion,
                   budget: numericBudget,
                   giftWrapping: false,
                   messageCard: '',
                 })
+
+                if (category !== 'All') {
+                  setCategoryFilter?.(category)
+                }
 
                 navigate('shop')
               }}
@@ -1704,16 +1810,23 @@ function GiftPage({
           </div>
 
           <div className="product-row-three">
-            {picks.map((product) => (
-              <PinterestCard
-                key={product.id}
-                product={product}
-                wishlist={wishlist}
-                addToCart={addToCart}
-                toggleWishlist={toggleWishlist}
-                openProduct={openProduct}
+            {picks.length ? (
+              picks.slice(0, 9).map((product) => (
+                <PinterestCard
+                  key={product.id}
+                  product={product}
+                  wishlist={wishlist}
+                  addToCart={addToCart}
+                  toggleWishlist={toggleWishlist}
+                  openProduct={openProduct}
+                />
+              ))
+            ) : (
+              <EmptyState
+                title="No gifts in this range yet."
+                text="Try a bigger budget or a different category."
               />
-            ))}
+            )}
           </div>
         </div>
       </section>
@@ -2575,7 +2688,7 @@ function ProfilePage({
           Saved Addresses <span>→</span>
         </button>
 
-        <button>
+        <button onClick={() => navigate('settings')}>
           Account Settings <span>→</span>
         </button>
 
@@ -2586,6 +2699,94 @@ function ProfilePage({
           Sign Out <span>→</span>
         </button>
       </div>
+    </main>
+  )
+}
+
+
+function AccountSettingsPage({ user, setUser, navigate, notify }) {
+  const [name, setName] = useState(user?.name || '')
+  const [phone, setPhone] = useState(user?.phone || '')
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = (e) => {
+    e.preventDefault()
+
+    if (!name.trim()) {
+      notify('Please add your name')
+      return
+    }
+
+    setSaving(true)
+
+    // There's no backend endpoint yet to persist profile edits, so we save
+    // locally for now — this still keeps the change across sessions.
+    setUser((current) => ({
+      ...current,
+      name: name.trim(),
+      phone: phone.trim(),
+    }))
+
+    window.setTimeout(() => {
+      setSaving(false)
+      notify('Account settings saved ✨')
+    }, 300)
+  }
+
+  return (
+    <main className="page-section">
+      <div className="page-intro">
+        <span className="eyebrow">✦ ACCOUNT SETTINGS</span>
+        <h1>Your details.</h1>
+        <p>Keep your name and phone number up to date.</p>
+      </div>
+
+      <form className="builder-controls" onSubmit={handleSave} style={{ maxWidth: 420 }}>
+        <BuilderStep number="01" title="Name">
+          <input
+            className="wide-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your name"
+          />
+        </BuilderStep>
+
+        <BuilderStep number="02" title="Email">
+          <input
+            className="wide-input"
+            value={user?.email || ''}
+            disabled
+          />
+          <small>Email can't be changed here — contact us if you need it updated.</small>
+        </BuilderStep>
+
+        <BuilderStep number="03" title="Phone">
+          <input
+            className="wide-input"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="Your phone number"
+          />
+        </BuilderStep>
+
+        <div className="builder-bottom">
+          <button
+            type="button"
+            className="mini-link"
+            onClick={() => navigate('profile')}
+          >
+            ← Back to My Page
+          </button>
+
+          <button
+            type="submit"
+            className="primary-cta"
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
     </main>
   )
 }

@@ -204,7 +204,7 @@ a { color: inherit; text-decoration: none; }
 .filter-card>b,.filter-card>span{display:block;}
 .filter-card>span{margin-top:20px;margin-bottom:7px;font-size:10px;font-weight:800;}
 .filter-card label{display:block;margin:8px 0;color:var(--muted);font-size:9px;}
-.swatches{display:flex;gap:7px}.swatches i{width:19px;height:19px;border-radius:50%;box-shadow:0 0 0 1px var(--line)}.s-lavender{background:var(--lavender)}.s-pink{background:var(--pink)}.s-yellow{background:var(--yellow)}.s-mint{background:var(--mint)}.s-blue{background:var(--blue)}
+.swatches{display:flex;gap:7px}.swatches i{width:19px;height:19px;border-radius:50%;box-shadow:0 0 0 1px var(--line);cursor:pointer;display:inline-block}.s-lavender{background:var(--lavender)}.s-pink{background:var(--pink)}.s-yellow{background:var(--yellow)}.s-mint{background:var(--mint)}.s-blue{background:var(--blue)}.swatches i.selected{box-shadow:0 0 0 2px white,0 0 0 4px var(--lavender-deep, #6b4f8a)}
 .shop-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;}
 .shop-grid .pin-card.tall{margin-top:0;}
 

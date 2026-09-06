@@ -45,6 +45,8 @@ def create_customization():
     features = data.get("features", [])
     accessory = data.get("accessory")
     personalized_name = data.get("personalizedName")
+    base = data.get("base")
+    preview_image = data.get("previewImage")
 
     if not user_id or not product_id or not color or not size:
         return jsonify({
@@ -93,6 +95,8 @@ def create_customization():
         "features": features,
         "accessory": accessory,
         "personalizedName": personalized_name,
+        "base": base,
+        "previewImage": preview_image,
         "createdAt": datetime.now(timezone.utc)
     }
 
@@ -154,12 +158,14 @@ def get_customization(customization_id):
         "customization": customization
     }), 200
 
+
 # --------------------------------------------------
 # GET CUSTOM BUILDER BASE PRODUCT
 # --------------------------------------------------
 
 @customization_bp.route("/api/customizations/template", methods=["GET"])
 def get_customization_template():
+
     product = db.products.find_one({
         "seedKey": "custom-builder-base",
         "isActive": True,
