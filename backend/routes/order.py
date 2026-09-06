@@ -1,40 +1,41 @@
-from flask import Blueprint, request, jsonify
-from config import db
-from bson import ObjectId
-from uuid import uuid4
-from datetime import datetime, timezone
-
 import os
-import smtplib
-from email.message import EmailMessage
+import uuid
+from datetime import datetime
 
+from flask import Blueprint, request, jsonify
+from bson import ObjectId
 import razorpay
-from config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+
+from config import db, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 
 
 order_bp = Blueprint("order", __name__)
 
 
-# -------------------------------------------------
+# ============================================================
 # RAZORPAY CLIENT
-# -------------------------------------------------
+# ============================================================
 
-razorpay_client = razorpay.Client(
-    auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
-)
+razorpay_client = None
+
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+    razorpay_client = razorpay.Client(
+        auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
+    )
 
 
-# -------------------------------------------------
-# CONVERT MONGODB OBJECTID TO STRING
-# -------------------------------------------------
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
 
 def convert_object_ids(data):
+    """
+    Convert MongoDB ObjectId values into strings so they can
+    safely be returned as JSON.
+    """
 
     if isinstance(data, ObjectId):
         return str(data)
-
-    if isinstance(data, list):
-        return [convert_object_ids(item) for item in data]
 
     if isinstance(data, dict):
         return {
@@ -42,559 +43,514 @@ def convert_object_ids(data):
             for key, value in data.items()
         }
 
+    if isinstance(data, list):
+        return [
+            convert_object_ids(item)
+            for item in data
+        ]
+
     return data
 
 
-# -------------------------------------------------
-# FIND USER
-# -------------------------------------------------
-
 def find_user(user_id):
+    """
+    Find a user by either MongoDB ObjectId or string userId.
+    """
 
-    return db.users.find_one({
+    try:
+        if ObjectId.is_valid(user_id):
+            user = db.users.find_one({
+                "_id": ObjectId(user_id)
+            })
+
+            if user:
+                return user
+    except Exception:
+        pass
+
+    user = db.users.find_one({
         "userId": user_id
     })
 
+    if user:
+        return user
 
-# -------------------------------------------------
-# SEND NEW ORDER EMAIL
-# -------------------------------------------------
+    user = db.users.find_one({
+        "id": user_id
+    })
 
-def send_new_order_email(order, user):
+    return user
 
-    try:
-        mail_username = os.getenv("MAIL_USERNAME")
-        mail_password = os.getenv("MAIL_PASSWORD")
-        admin_email = os.getenv("ADMIN_EMAIL")
-
-        if not mail_username or not mail_password or not admin_email:
-            print("Email configuration is missing.")
-            return False
-
-        customer_name = (
-            user.get("name")
-            or user.get("Name")
-            or "Customer"
-        )
-
-        customer_email = (
-            user.get("email")
-            or user.get("Email")
-            or "Not provided"
-        )
-
-        shipping = order.get("shippingAddress", {})
-
-        if isinstance(shipping, dict):
-            shipping_text = "\n".join(
-                f"{key}: {value}"
-                for key, value in shipping.items()
-            )
-        else:
-            shipping_text = str(shipping)
-
-        items_text = []
-
-        for item in order.get("items", []):
-            product_id = item.get("productId", "Unknown")
-            quantity = item.get("quantity", 1)
-            subtotal = item.get("subtotal", 0)
-
-            items_text.append(
-                f"- Product ID: {product_id}\n"
-                f"  Quantity: {quantity}\n"
-                f"  Subtotal: ₹{subtotal:.2f}"
-            )
-
-        items_text = "\n".join(items_text)
-
-        payment_status = order.get(
-            "paymentStatus",
-            "pending"
-        )
-
-        payment_method = order.get(
-            "paymentMethod",
-            "Unknown"
-        )
-
-        order_date = order.get("createdAt")
-
-        if order_date:
-            order_date = order_date.strftime(
-                "%d %B %Y, %I:%M %p"
-            )
-        else:
-            order_date = "Not available"
-
-        subject = (
-            f"🧶 New YarnTales Order - "
-            f"{order.get('orderId', 'Unknown')}"
-        )
-
-        body = f"""
-New YarnTales Order Received!
-
-----------------------------------------
-ORDER DETAILS
-----------------------------------------
-
-Order ID: {order.get('orderId', 'Unknown')}
-Order Date: {order_date}
-
-----------------------------------------
-CUSTOMER DETAILS
-----------------------------------------
-
-Name: {customer_name}
-Email: {customer_email}
-
-----------------------------------------
-ORDER ITEMS
-----------------------------------------
-
-{items_text}
-
-----------------------------------------
-PAYMENT
-----------------------------------------
-
-Payment Method: {payment_method}
-Payment Status: {payment_status}
-Payment Reference: {order.get('paymentReference') or 'N/A'}
-
-Total Amount: ₹{order.get('total', 0):.2f}
-
-----------------------------------------
-SHIPPING ADDRESS
-----------------------------------------
-
-{shipping_text}
-
-----------------------------------------
-
-This is an automatic notification from YarnTales.
-"""
-
-        message = EmailMessage()
-
-        message["Subject"] = subject
-        message["From"] = mail_username
-        message["To"] = admin_email
-
-        message.set_content(body)
-
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-
-            server.starttls()
-
-            server.login(
-                mail_username,
-                mail_password
-            )
-
-            server.send_message(message)
-
-        print("New order email sent successfully.")
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"Failed to send new order email: {str(e)}"
-        )
-
-        return False
-
-
-# -------------------------------------------------
-# CALCULATE ORDER TOTAL
-# -------------------------------------------------
 
 def calculate_order_items(items):
+    """
+    Validate cart items against products in MongoDB and
+    calculate the final order total using database prices.
+    """
 
-    if not isinstance(items, list):
-        return None, None, {
-            "message": "items must be an array"
-        }
-
-    if len(items) == 0:
-        return None, None, {
-            "message": "Order must contain at least one item"
-        }
-
-    order_items = []
-    total = 0
+    calculated_items = []
+    total_amount = 0
 
     for item in items:
 
-        if not isinstance(item, dict):
-            return None, None, {
-                "message": "Each order item must be an object"
-            }
+        product_id = (
+            item.get("productId")
+            or item.get("id")
+            or item.get("_id")
+        )
 
-        product_id = item.get("productId")
         quantity = item.get("quantity", 1)
-
-        if not product_id:
-            return None, None, {
-                "message": "Each item must contain productId"
-            }
-
-        try:
-            product_object_id = ObjectId(product_id)
-
-        except Exception:
-            return None, None, {
-                "message": "Invalid product ID"
-            }
-
-        product = db.products.find_one({
-            "_id": product_object_id
-        })
-
-        if not product:
-            return None, None, {
-                "message": "Product not found",
-                "productId": product_id
-            }
 
         try:
             quantity = int(quantity)
+        except (TypeError, ValueError):
+            quantity = 1
 
-        except (ValueError, TypeError):
-            return None, None, {
-                "message": "Quantity must be a number"
-            }
+        if quantity < 1:
+            quantity = 1
 
-        if quantity <= 0:
-            return None, None, {
-                "message": "Quantity must be greater than 0"
-            }
+        if not product_id:
+            continue
 
-        price = float(product.get("basePrice", 0))
+        product = None
 
-        if price <= 0:
-            return None, None, {
-                "message": "Product price must be greater than 0"
-            }
+        # Try ObjectId
+        try:
+            if ObjectId.is_valid(str(product_id)):
+                product = db.products.find_one({
+                    "_id": ObjectId(str(product_id))
+                })
+        except Exception:
+            pass
+
+        # Try productId field
+        if not product:
+            product = db.products.find_one({
+                "productId": str(product_id)
+            })
+
+        # Try id field
+        if not product:
+            product = db.products.find_one({
+                "id": str(product_id)
+            })
+
+        if not product:
+            continue
+
+        price = product.get("price", 0)
+
+        try:
+            price = float(price)
+        except (TypeError, ValueError):
+            price = 0
 
         subtotal = price * quantity
+        total_amount += subtotal
 
-        order_items.append({
-            "productId": product_object_id,
+        calculated_items.append({
+            "productId": str(
+                product.get("productId")
+                or product.get("_id")
+            ),
+            "name": product.get(
+                "name",
+                product.get("title", "Product")
+            ),
+            "price": price,
             "quantity": quantity,
-            "subtotal": subtotal
+            "subtotal": subtotal,
+            "image": product.get(
+                "image",
+                product.get("imageUrl", "")
+            ),
         })
 
-        total += subtotal
-
-    return order_items, total, None
+    return calculated_items, total_amount
 
 
-# -------------------------------------------------
+# ============================================================
 # CREATE RAZORPAY PAYMENT ORDER
-# -------------------------------------------------
+# ============================================================
 
 @order_bp.route("/api/payment/create", methods=["POST"])
-def create_razorpay_payment():
-
-    data = request.get_json()
-
-    if not data:
-        return jsonify({
-            "message": "Request body is required"
-        }), 400
-
-    user_id = data.get("userId")
-    items = data.get("items")
-
-    if not user_id:
-        return jsonify({
-            "message": "userId is required"
-        }), 400
-
-    user = find_user(user_id)
-
-    if not user:
-        return jsonify({
-            "message": "User not found"
-        }), 404
-
-    order_items, total, error = calculate_order_items(items)
-
-    if error:
-        return jsonify(error), 400
-
-    amount_in_paise = int(round(total * 100))
+def create_payment():
 
     try:
 
-        razorpay_order = razorpay_client.order.create({
+        if not razorpay_client:
+            return jsonify({
+                "error": "Razorpay is not configured"
+            }), 500
+
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "error": "Request body is required"
+            }), 400
+
+        amount = data.get("amount")
+
+        if amount is None:
+            return jsonify({
+                "error": "Amount is required"
+            }), 400
+
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            return jsonify({
+                "error": "Invalid amount"
+            }), 400
+
+        if amount <= 0:
+            return jsonify({
+                "error": "Amount must be greater than zero"
+            }), 400
+
+        # Razorpay expects amount in paise
+        amount_in_paise = int(round(amount * 100))
+
+        payment_data = {
             "amount": amount_in_paise,
             "currency": "INR",
-            "receipt": str(uuid4()),
-            "notes": {
-                "userId": user_id
-            }
-        })
+            "receipt": str(uuid.uuid4())[:40],
+        }
+
+        razorpay_order = razorpay_client.order.create(
+            data=payment_data
+        )
+
+        return jsonify({
+            "success": True,
+            "order": razorpay_order
+        }), 200
 
     except Exception as e:
 
+        print("Razorpay create order error:", str(e))
+
         return jsonify({
-            "message": "Unable to create Razorpay payment order",
-            "error": str(e)
+            "error": "Failed to create payment order",
+            "details": str(e)
         }), 500
 
-    return jsonify({
-        "message": "Razorpay payment order created",
-        "keyId": RAZORPAY_KEY_ID,
-        "razorpayOrderId": razorpay_order["id"],
-        "amount": amount_in_paise,
-        "currency": "INR",
-        "total": total
-    }), 201
 
-
-# -------------------------------------------------
+# ============================================================
 # VERIFY RAZORPAY PAYMENT
-# -------------------------------------------------
+# ============================================================
 
 @order_bp.route("/api/payment/verify", methods=["POST"])
-def verify_razorpay_payment():
-
-    data = request.get_json()
-
-    if not data:
-        return jsonify({
-            "message": "Request body is required"
-        }), 400
-
-    razorpay_order_id = data.get("razorpay_order_id")
-    razorpay_payment_id = data.get("razorpay_payment_id")
-    razorpay_signature = data.get("razorpay_signature")
-
-    if not razorpay_order_id:
-        return jsonify({
-            "message": "razorpay_order_id is required"
-        }), 400
-
-    if not razorpay_payment_id:
-        return jsonify({
-            "message": "razorpay_payment_id is required"
-        }), 400
-
-    if not razorpay_signature:
-        return jsonify({
-            "message": "razorpay_signature is required"
-        }), 400
+def verify_payment():
 
     try:
 
-        razorpay_client.utility.verify_payment_signature({
+        if not razorpay_client:
+            return jsonify({
+                "error": "Razorpay is not configured"
+            }), 500
+
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "error": "Request body is required"
+            }), 400
+
+        razorpay_order_id = data.get(
+            "razorpay_order_id"
+        )
+
+        razorpay_payment_id = data.get(
+            "razorpay_payment_id"
+        )
+
+        razorpay_signature = data.get(
+            "razorpay_signature"
+        )
+
+        if not all([
+            razorpay_order_id,
+            razorpay_payment_id,
+            razorpay_signature
+        ]):
+            return jsonify({
+                "error": "Missing Razorpay payment details"
+            }), 400
+
+        verification_data = {
             "razorpay_order_id": razorpay_order_id,
             "razorpay_payment_id": razorpay_payment_id,
-            "razorpay_signature": razorpay_signature
-        })
+            "razorpay_signature": razorpay_signature,
+        }
+
+        razorpay_client.utility.verify_payment_signature(
+            verification_data
+        )
 
         return jsonify({
-            "message": "Payment signature verified successfully",
-            "verified": True,
-            "paymentId": razorpay_payment_id,
-            "razorpayOrderId": razorpay_order_id
+            "success": True,
+            "message": "Payment verified successfully"
         }), 200
 
-    except Exception:
+    except Exception as e:
+
+        print("Razorpay verification error:", str(e))
 
         return jsonify({
-            "message": "Payment signature verification failed",
-            "verified": False
+            "success": False,
+            "error": "Payment verification failed",
+            "details": str(e)
         }), 400
 
 
-# -------------------------------------------------
-# CREATE YARNTales ORDER
-# -------------------------------------------------
+# ============================================================
+# CREATE ORDER
+# ============================================================
 
 @order_bp.route("/api/orders", methods=["POST"])
 def create_order():
 
-    data = request.get_json()
+    try:
 
-    if not data:
-        return jsonify({
-            "message": "Request body is required"
-        }), 400
+        data = request.get_json()
 
-    user_id = data.get("userId")
-    shipping_address = data.get("shippingAddress")
-    payment_method = data.get("paymentMethod", "UPI")
-    payment_status = data.get("paymentStatus")
-    payment_reference = data.get("paymentReference")
-    items = data.get("items")
+        if not data:
+            return jsonify({
+                "error": "Request body is required"
+            }), 400
 
-    allowed_payment_methods = [
-        "UPI",
-        "Card",
-        "Cash on Delivery"
-    ]
+        # ----------------------------------------------------
+        # USER
+        # ----------------------------------------------------
 
-    if payment_method not in allowed_payment_methods:
+        user_id = data.get("userId")
 
-        return jsonify({
-            "message": "Invalid payment method",
-            "allowedPaymentMethods": allowed_payment_methods
-        }), 400
+        if not user_id:
+            return jsonify({
+                "error": "User ID is required"
+            }), 400
 
-    # -------------------------------------------------
-    # USER
-    # -------------------------------------------------
+        user = find_user(user_id)
 
-    if not user_id:
+        if not user:
+            return jsonify({
+                "error": "User not found"
+            }), 404
 
-        return jsonify({
-            "message": "userId is required"
-        }), 400
+        # ----------------------------------------------------
+        # SHIPPING ADDRESS
+        # ----------------------------------------------------
 
-    user = find_user(user_id)
+        shipping_address = data.get(
+            "shippingAddress"
+        )
 
-    if not user:
+        if not shipping_address:
+            return jsonify({
+                "error": "Shipping address is required"
+            }), 400
 
-        return jsonify({
-            "message": "User not found"
-        }), 404
+        # ----------------------------------------------------
+        # ITEMS
+        # ----------------------------------------------------
 
-    # -------------------------------------------------
-    # SHIPPING ADDRESS
-    # -------------------------------------------------
+        items = data.get("items", [])
 
-    if not shipping_address:
+        if not items:
+            return jsonify({
+                "error": "Order must contain at least one item"
+            }), 400
 
-        return jsonify({
-            "message": "shippingAddress is required"
-        }), 400
+        # ----------------------------------------------------
+        # CALCULATE TOTAL
+        # ----------------------------------------------------
 
-    # -------------------------------------------------
-    # ORDER ITEMS
-    # -------------------------------------------------
+        calculated_items, total_amount = calculate_order_items(
+            items
+        )
 
-    order_items, total, error = calculate_order_items(items)
+        if not calculated_items:
+            return jsonify({
+                "error": "No valid products found in order"
+            }), 400
 
-    if error:
+        # ----------------------------------------------------
+        # PAYMENT
+        # ----------------------------------------------------
 
-        return jsonify(error), 400
+        payment_method = data.get(
+            "paymentMethod",
+            "COD"
+        )
 
-    # -------------------------------------------------
-    # PAYMENT STATUS
-    # -------------------------------------------------
+        payment_status = data.get(
+            "paymentStatus",
+            "pending"
+        )
 
-    if payment_method == "Cash on Delivery":
+        payment_reference = data.get(
+            "paymentReference"
+        )
 
-        payment_status = "pending"
-
-    else:
-
+        # Only mark as paid when frontend explicitly sends
+        # a successful payment status.
         if payment_status != "paid":
-
             payment_status = "pending"
 
-    # -------------------------------------------------
-    # CREATE ORDER
-    # -------------------------------------------------
+        # ----------------------------------------------------
+        # ORDER
+        # ----------------------------------------------------
 
-    order = {
+        order = {
+            "orderId": str(uuid.uuid4()),
 
-        "orderId": str(uuid4()),
+            "userId": str(user_id),
 
-        "userId": user["_id"],
+            "customerName": user.get(
+                "name",
+                user.get("fullName", "")
+            ),
 
-        "items": order_items,
+            "customerEmail": user.get(
+                "email",
+                ""
+            ),
 
-        "total": total,
+            "items": calculated_items,
 
-        "status": "order_confirmed",
+            "shippingAddress": shipping_address,
 
-        "shippingAddress": shipping_address,
+            "totalAmount": total_amount,
 
-        "paymentMethod": payment_method,
+            "paymentMethod": payment_method,
 
-        "paymentStatus": payment_status,
+            "paymentStatus": payment_status,
 
-        "paymentReference": payment_reference,
+            "paymentReference": payment_reference,
 
-        "createdAt": datetime.now(timezone.utc),
+            "status": "order_confirmed",
 
-        "updatedAt": datetime.now(timezone.utc)
-    }
+            "createdAt": datetime.utcnow(),
+        }
 
-    # -------------------------------------------------
-    # SAVE ORDER
-    # -------------------------------------------------
+        # ----------------------------------------------------
+        # SAVE ORDER FIRST
+        # ----------------------------------------------------
 
-    db.orders.insert_one(order)
+        db.orders.insert_one(order)
 
-    # -------------------------------------------------
-    # SEND ADMIN EMAIL
-    # -------------------------------------------------
+        # ----------------------------------------------------
+        # IMPORTANT
+        # ----------------------------------------------------
+        #
+        # DO NOT send Gmail SMTP email here.
+        #
+        # Railway can block / delay SMTP connections to
+        # smtp.gmail.com:587.
+        #
+        # If email is sent here, the customer's order request
+        # waits for Gmail and Gunicorn can kill the worker.
+        #
+        # The order must always be saved and returned first.
+        #
+        # ----------------------------------------------------
 
-    send_new_order_email(order, user)
+        order = convert_object_ids(order)
 
-    order = convert_object_ids(order)
+        return jsonify({
+            "message": "Order created successfully",
+            "order": order
+        }), 201
 
-    return jsonify({
-        "message": "Order created successfully",
-        "order": order
-    }), 201
+    except Exception as e:
+
+        print("Create order error:", str(e))
+
+        return jsonify({
+            "error": "Failed to create order",
+            "details": str(e)
+        }), 500
 
 
-# -------------------------------------------------
+# ============================================================
 # GET USER ORDERS
-# -------------------------------------------------
+# ============================================================
 
-@order_bp.route("/api/orders/user/<user_id>", methods=["GET"])
+@order_bp.route(
+    "/api/orders/user/<user_id>",
+    methods=["GET"]
+)
 def get_user_orders(user_id):
 
-    user = find_user(user_id)
+    try:
 
-    if not user:
+        orders = list(
+            db.orders.find({
+                "userId": str(user_id)
+            }).sort(
+                "createdAt",
+                -1
+            )
+        )
+
+        orders = convert_object_ids(orders)
 
         return jsonify({
-            "message": "User not found"
-        }), 404
+            "orders": orders
+        }), 200
 
-    orders = list(
-        db.orders.find({
-            "userId": user["_id"]
-        }).sort("createdAt", -1)
-    )
+    except Exception as e:
 
-    orders = convert_object_ids(orders)
+        print("Get user orders error:", str(e))
 
-    return jsonify({
-        "orders": orders
-    }), 200
+        return jsonify({
+            "error": "Failed to fetch orders",
+            "details": str(e)
+        }), 500
 
 
-# -------------------------------------------------
+# ============================================================
 # GET SINGLE ORDER
-# -------------------------------------------------
+# ============================================================
 
-@order_bp.route("/api/orders/<order_id>", methods=["GET"])
+@order_bp.route(
+    "/api/orders/<order_id>",
+    methods=["GET"]
+)
 def get_order(order_id):
 
-    order = db.orders.find_one({
-        "orderId": order_id
-    })
+    try:
 
-    if not order:
+        order = db.orders.find_one({
+            "orderId": str(order_id)
+        })
+
+        # Fallback to MongoDB _id
+        if not order and ObjectId.is_valid(order_id):
+
+            order = db.orders.find_one({
+                "_id": ObjectId(order_id)
+            })
+
+        if not order:
+
+            return jsonify({
+                "error": "Order not found"
+            }), 404
+
+        order = convert_object_ids(order)
 
         return jsonify({
-            "message": "Order not found"
-        }), 404
+            "order": order
+        }), 200
 
-    order = convert_object_ids(order)
+    except Exception as e:
 
-    return jsonify({
-        "order": order
-    }), 200
+        print("Get order error:", str(e))
+
+        return jsonify({
+            "error": "Failed to fetch order",
+            "details": str(e)
+        }), 500
