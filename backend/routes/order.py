@@ -4,6 +4,10 @@ from bson import ObjectId
 from uuid import uuid4
 from datetime import datetime, timezone
 
+import os
+import smtplib
+from email.message import EmailMessage
+
 import razorpay
 from config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 
@@ -50,6 +54,158 @@ def find_user(user_id):
     return db.users.find_one({
         "userId": user_id
     })
+
+
+# -------------------------------------------------
+# SEND NEW ORDER EMAIL
+# -------------------------------------------------
+
+def send_new_order_email(order, user):
+
+    try:
+        mail_username = os.getenv("MAIL_USERNAME")
+        mail_password = os.getenv("MAIL_PASSWORD")
+        admin_email = os.getenv("ADMIN_EMAIL")
+
+        if not mail_username or not mail_password or not admin_email:
+            print("Email configuration is missing.")
+            return False
+
+        customer_name = (
+            user.get("name")
+            or user.get("Name")
+            or "Customer"
+        )
+
+        customer_email = (
+            user.get("email")
+            or user.get("Email")
+            or "Not provided"
+        )
+
+        shipping = order.get("shippingAddress", {})
+
+        if isinstance(shipping, dict):
+            shipping_text = "\n".join(
+                f"{key}: {value}"
+                for key, value in shipping.items()
+            )
+        else:
+            shipping_text = str(shipping)
+
+        items_text = []
+
+        for item in order.get("items", []):
+            product_id = item.get("productId", "Unknown")
+            quantity = item.get("quantity", 1)
+            subtotal = item.get("subtotal", 0)
+
+            items_text.append(
+                f"- Product ID: {product_id}\n"
+                f"  Quantity: {quantity}\n"
+                f"  Subtotal: ₹{subtotal:.2f}"
+            )
+
+        items_text = "\n".join(items_text)
+
+        payment_status = order.get(
+            "paymentStatus",
+            "pending"
+        )
+
+        payment_method = order.get(
+            "paymentMethod",
+            "Unknown"
+        )
+
+        order_date = order.get("createdAt")
+
+        if order_date:
+            order_date = order_date.strftime(
+                "%d %B %Y, %I:%M %p"
+            )
+        else:
+            order_date = "Not available"
+
+        subject = (
+            f"🧶 New YarnTales Order - "
+            f"{order.get('orderId', 'Unknown')}"
+        )
+
+        body = f"""
+New YarnTales Order Received!
+
+----------------------------------------
+ORDER DETAILS
+----------------------------------------
+
+Order ID: {order.get('orderId', 'Unknown')}
+Order Date: {order_date}
+
+----------------------------------------
+CUSTOMER DETAILS
+----------------------------------------
+
+Name: {customer_name}
+Email: {customer_email}
+
+----------------------------------------
+ORDER ITEMS
+----------------------------------------
+
+{items_text}
+
+----------------------------------------
+PAYMENT
+----------------------------------------
+
+Payment Method: {payment_method}
+Payment Status: {payment_status}
+Payment Reference: {order.get('paymentReference') or 'N/A'}
+
+Total Amount: ₹{order.get('total', 0):.2f}
+
+----------------------------------------
+SHIPPING ADDRESS
+----------------------------------------
+
+{shipping_text}
+
+----------------------------------------
+
+This is an automatic notification from YarnTales.
+"""
+
+        message = EmailMessage()
+
+        message["Subject"] = subject
+        message["From"] = mail_username
+        message["To"] = admin_email
+
+        message.set_content(body)
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+
+            server.starttls()
+
+            server.login(
+                mail_username,
+                mail_password
+            )
+
+            server.send_message(message)
+
+        print("New order email sent successfully.")
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"Failed to send new order email: {str(e)}"
+        )
+
+        return False
 
 
 # -------------------------------------------------
@@ -171,8 +327,6 @@ def create_razorpay_payment():
     if error:
         return jsonify(error), 400
 
-    # Razorpay amount is always in the smallest currency unit.
-    # For INR, this means paise.
     amount_in_paise = int(round(total * 100))
 
     try:
@@ -341,8 +495,6 @@ def create_order():
 
     else:
 
-        # For Razorpay payments, the frontend must only
-        # send "paid" after successful server verification.
         if payment_status != "paid":
 
             payment_status = "pending"
@@ -355,28 +507,24 @@ def create_order():
 
         "orderId": str(uuid4()),
 
-        # MongoDB expects the actual User ObjectId
         "userId": user["_id"],
 
-        # Required order items
         "items": order_items,
 
-        # Total order amount
         "total": total,
 
-        # Required tracking status
         "status": "order_confirmed",
 
-        # Shipping information
         "shippingAddress": shipping_address,
 
-        # Payment information
         "paymentMethod": payment_method,
+
         "paymentStatus": payment_status,
+
         "paymentReference": payment_reference,
 
-        # Timestamps
         "createdAt": datetime.now(timezone.utc),
+
         "updatedAt": datetime.now(timezone.utc)
     }
 
@@ -385,6 +533,12 @@ def create_order():
     # -------------------------------------------------
 
     db.orders.insert_one(order)
+
+    # -------------------------------------------------
+    # SEND ADMIN EMAIL
+    # -------------------------------------------------
+
+    send_new_order_email(order, user)
 
     order = convert_object_ids(order)
 
