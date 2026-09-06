@@ -10,9 +10,9 @@ MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "yarntales")
 SECRET_KEY = os.getenv("SECRET_KEY")
 
-RAZORPAY_KEY_ID = os.getenv("rzp_test_TY5Vc7w072jodU")
-RAZORPAY_KEY_SECRET = os.getenv("NumazcbzCc0dwDmfEnclthar")
-
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
 if not MONGO_URI:
     raise RuntimeError("MONGO_URI is required in backend/.env")
 

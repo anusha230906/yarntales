@@ -7,7 +7,7 @@ from bson import ObjectId
 import razorpay
 import resend
 
-from config import db, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+from config import db, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
 
 
 # ============================================================
@@ -683,6 +683,7 @@ def send_new_order_email(order, user):
         return False
 
 
+
 # ============================================================
 # RAZORPAY: CREATE PAYMENT ORDER
 # ============================================================
@@ -694,95 +695,132 @@ def send_new_order_email(order, user):
 def create_payment():
 
     try:
-
         if not razorpay_client:
-
             return jsonify({
                 "error": "Razorpay is not configured"
             }), 500
 
-        data = request.get_json()
+        data = request.get_json() or {}
+        user_id = data.get("userId")
+        items = data.get("items") or []
+        shipping_address = data.get("shippingAddress") or {}
+        payment_method = data.get("paymentMethod") or "UPI"
 
-        if not data:
+        if not user_id:
+            return jsonify({"error": "User ID is required"}), 400
 
-            return jsonify({
-                "error": "Request body is required"
-            }), 400
+        user = find_user(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
 
-        amount = data.get(
-            "amount"
-        )
+        if not items:
+            return jsonify({"error": "Order must contain at least one item"}), 400
 
-        if amount is None:
+        calculated_items, total = calculate_order_items(items)
+        if not calculated_items or total <= 0:
+            return jsonify({"error": "Unable to calculate a valid order total"}), 400
 
-            return jsonify({
-                "error": "Amount is required"
-            }), 400
-
-        try:
-
-            amount = float(
-                amount
-            )
-
-        except (TypeError, ValueError):
-
-            return jsonify({
-                "error": "Invalid amount"
-            }), 400
-
-        if amount <= 0:
-
-            return jsonify({
-                "error": "Amount must be greater than zero"
-            }), 400
-
-        amount_in_paise = int(
-            round(
-                amount * 100
-            )
-        )
+        amount_in_paise = int(round(total * 100))
+        receipt = f"YT-{uuid.uuid4().hex[:24]}"
 
         payment_data = {
-
             "amount": amount_in_paise,
-
             "currency": "INR",
-
-            "receipt": str(
-                uuid.uuid4()
-            )[:40]
+            "receipt": receipt,
+            "notes": {
+                "yarnTalesUserId": str(user_id),
+                "paymentMethod": str(payment_method),
+            },
         }
 
-        razorpay_order = (
-            razorpay_client.order.create(
-                data=payment_data
-            )
+        razorpay_order = razorpay_client.order.create(data=payment_data)
+
+        db.payment_transactions.update_one(
+            {"razorpayOrderId": razorpay_order["id"]},
+            {
+                "$set": {
+                    "razorpayOrderId": razorpay_order["id"],
+                    "userId": user.get("_id"),
+                    "items": calculated_items,
+                    "total": total,
+                    "amountPaise": amount_in_paise,
+                    "currency": "INR",
+                    "shippingAddress": shipping_address,
+                    "paymentMethod": payment_method,
+                    "status": "created",
+                    "createdAt": datetime.utcnow(),
+                }
+            },
+            upsert=True,
         )
 
         return jsonify({
-
             "success": True,
-
-            "order": razorpay_order
-
+            "keyId": RAZORPAY_KEY_ID,
+            "order": razorpay_order,
         }), 200
 
     except Exception as e:
-
-        print(
-            "Razorpay create order error:",
-            str(e)
-        )
-
+        print("Razorpay create order error:", str(e))
         return jsonify({
-
-            "error":
-                "Failed to create payment order",
-
-            "details": str(e)
-
+            "error": "Failed to create payment order",
+            "details": str(e),
         }), 500
+
+
+# ============================================================
+# HELPER: FINALIZE VERIFIED RAZORPAY ORDER
+# ============================================================
+
+def finalize_verified_payment(transaction, payment_id):
+
+    existing = db.orders.find_one({
+        "paymentReference": str(payment_id)
+    })
+
+    if existing:
+        return convert_object_ids(existing)
+
+    order_id = str(uuid.uuid4())
+
+    order = {
+        "orderId": order_id,
+        "userId": transaction["userId"],
+        "items": transaction["items"],
+        "total": transaction["total"],
+        "status": "order_confirmed",
+        "createdAt": datetime.utcnow(),
+        "paymentMethod": transaction.get("paymentMethod", "Razorpay"),
+        "paymentStatus": "paid",
+        "paymentReference": str(payment_id),
+        "razorpayOrderId": transaction["razorpayOrderId"],
+        "shippingAddress": transaction.get("shippingAddress", {}),
+    }
+
+    user = db.users.find_one({"_id": transaction["userId"]}) or {}
+    order["customerName"] = user.get("name", user.get("fullName", ""))
+    order["customerEmail"] = user.get("email", "")
+
+    db.orders.insert_one(order)
+
+    try:
+        send_new_order_email(order, user)
+    except Exception as e:
+        print("Admin order email failed:", str(e))
+
+    db.payment_transactions.update_one(
+        {"razorpayOrderId": transaction["razorpayOrderId"]},
+        {
+            "$set": {
+                "status": "verified",
+                "razorpayPaymentId": str(payment_id),
+                "orderId": order_id,
+                "verifiedAt": datetime.utcnow(),
+            }
+        },
+    )
+
+    return convert_object_ids(order)
 
 
 # ============================================================
@@ -796,86 +834,132 @@ def create_payment():
 def verify_payment():
 
     try:
-
         if not razorpay_client:
+            return jsonify({"error": "Razorpay is not configured"}), 500
 
-            return jsonify({
-                "error": "Razorpay is not configured"
-            }), 500
-
-        data = request.get_json()
-
-        if not data:
-
-            return jsonify({
-                "error": "Request body is required"
-            }), 400
-
-        razorpay_order_id = data.get(
-            "razorpay_order_id"
-        )
-
-        razorpay_payment_id = data.get(
-            "razorpay_payment_id"
-        )
-
-        razorpay_signature = data.get(
-            "razorpay_signature"
-        )
+        data = request.get_json() or {}
+        user_id = data.get("userId")
+        razorpay_order_id = data.get("razorpay_order_id")
+        razorpay_payment_id = data.get("razorpay_payment_id")
+        razorpay_signature = data.get("razorpay_signature")
 
         if not all([
+            user_id,
             razorpay_order_id,
             razorpay_payment_id,
-            razorpay_signature
+            razorpay_signature,
         ]):
+            return jsonify({"error": "Missing Razorpay payment details"}), 400
 
+        user = find_user(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        transaction = db.payment_transactions.find_one({
+            "razorpayOrderId": str(razorpay_order_id)
+        })
+
+        if not transaction:
+            return jsonify({"error": "Payment transaction not found"}), 404
+
+        if str(transaction.get("userId")) != str(user.get("_id")):
+            return jsonify({"error": "Payment does not belong to this user"}), 403
+
+        razorpay_client.utility.verify_payment_signature({
+            "razorpay_order_id": razorpay_order_id,
+            "razorpay_payment_id": razorpay_payment_id,
+            "razorpay_signature": razorpay_signature,
+        })
+
+        payment = razorpay_client.payment.fetch(razorpay_payment_id)
+
+        if str(payment.get("order_id")) != str(razorpay_order_id):
+            return jsonify({"error": "Payment/order mismatch"}), 400
+
+        expected_amount = int(transaction.get("amountPaise", 0))
+        if int(payment.get("amount", -1)) != expected_amount:
+            return jsonify({"error": "Payment amount mismatch"}), 400
+
+        # If the account uses manual capture, capture an authorized payment.
+        if payment.get("status") == "authorized":
+            payment = razorpay_client.payment.capture(
+                razorpay_payment_id,
+                expected_amount,
+            )
+
+        if payment.get("status") != "captured":
             return jsonify({
-                "error":
-                    "Missing Razorpay payment details"
+                "error": "Payment has not been captured",
+                "paymentStatus": payment.get("status"),
             }), 400
 
-        verification_data = {
-
-            "razorpay_order_id":
-                razorpay_order_id,
-
-            "razorpay_payment_id":
-                razorpay_payment_id,
-
-            "razorpay_signature":
-                razorpay_signature
-        }
-
-        razorpay_client.utility.verify_payment_signature(
-            verification_data
+        order = finalize_verified_payment(
+            transaction,
+            razorpay_payment_id,
         )
 
         return jsonify({
-
             "success": True,
-
-            "message":
-                "Payment verified successfully"
-
+            "message": "Payment verified and order created successfully",
+            "order": order,
         }), 200
 
     except Exception as e:
+        print("Razorpay verification error:", str(e))
+        return jsonify({
+            "success": False,
+            "error": "Payment verification failed",
+            "details": str(e),
+        }), 400
 
-        print(
-            "Razorpay verification error:",
-            str(e)
+
+# ============================================================
+# RAZORPAY: WEBHOOK
+# ============================================================
+
+@order_bp.route(
+    "/api/payment/webhook",
+    methods=["POST"]
+)
+def razorpay_webhook():
+
+    try:
+        if not RAZORPAY_WEBHOOK_SECRET:
+            return jsonify({"error": "Webhook secret is not configured"}), 500
+
+        signature = request.headers.get("X-Razorpay-Signature", "")
+        raw_body = request.get_data(as_text=True)
+
+        razorpay_client.utility.verify_webhook_signature(
+            raw_body,
+            signature,
+            RAZORPAY_WEBHOOK_SECRET,
         )
 
-        return jsonify({
+        payload = request.get_json(silent=True) or {}
+        event = payload.get("event")
 
-            "success": False,
+        if event in {"order.paid", "payment.captured"}:
+            payment_entity = (
+                payload.get("payload", {})
+                .get("payment", {})
+                .get("entity", {})
+            )
+            payment_id = payment_entity.get("id")
+            order_id = payment_entity.get("order_id")
 
-            "error":
-                "Payment verification failed",
+            if payment_id and order_id:
+                transaction = db.payment_transactions.find_one({
+                    "razorpayOrderId": str(order_id)
+                })
+                if transaction:
+                    finalize_verified_payment(transaction, payment_id)
 
-            "details": str(e)
+        return jsonify({"success": True}), 200
 
-        }), 400
+    except Exception as e:
+        print("Razorpay webhook error:", str(e))
+        return jsonify({"error": "Webhook verification failed"}), 400
 
 
 # ============================================================
@@ -990,7 +1074,7 @@ def create_order():
 
         payment_method = data.get(
             "paymentMethod",
-            "COD"
+            "Cash on Delivery"
         )
 
         payment_status = data.get(
@@ -1002,8 +1086,18 @@ def create_order():
             "paymentReference"
         )
 
-        if payment_status != "paid":
+        if payment_method != "Cash on Delivery":
+            verified_payment = db.payment_transactions.find_one({
+                "razorpayPaymentId": str(payment_reference),
+                "status": "verified",
+                "userId": mongo_user_id,
+            }) if payment_reference else None
 
+            if payment_status != "paid" or not verified_payment:
+                return jsonify({
+                    "error": "Online payment must be verified before creating the order"
+                }), 400
+        else:
             payment_status = "pending"
 
         # ----------------------------------------------------

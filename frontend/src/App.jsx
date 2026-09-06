@@ -16,6 +16,9 @@ import {
   getCustomizationTemplate,
   createGiftRequest,
   createOrder,
+  createPaymentOrder,
+  verifyPayment,
+  loadRazorpayCheckout,
   getOrders,
   getOrderTracking,
   clearSession,
@@ -331,34 +334,128 @@ function App() {
     }
   }
 
-  const handlePlaceOrder = async (shippingAddress) => {
-    if (!currentUserId || cart.length === 0) return
+const handlePlaceOrder = async (shippingAddress) => {
+  if (!currentUserId || cart.length === 0) return
 
-    try {
-      const result = await createOrder({
+  try {
+    let result
+
+    const paymentMethod = shippingAddress?.paymentMethod || 'Cash on Delivery'
+    const orderItems = cart.map((item) => ({
+      productId: item.id,
+      quantity: item.quantity,
+    }))
+
+    if (paymentMethod === 'Cash on Delivery') {
+      result = await createOrder({
         userId: currentUserId,
         shippingAddress,
-        items: cart.map((item) => ({
-          productId: item.id,
-          quantity: item.quantity,
-        })),
+        items: orderItems,
+        paymentMethod,
+        paymentStatus: 'pending',
+      })
+    } else {
+      await loadRazorpayCheckout()
+
+      const paymentOrder = await createPaymentOrder({
+        userId: currentUserId,
+        shippingAddress,
+        items: orderItems,
+        paymentMethod,
       })
 
-      setLastOrderId(result.order.orderId)
+      if (!paymentOrder?.order?.id || !paymentOrder?.keyId) {
+        throw new Error('Razorpay payment order could not be created.')
+      }
 
-      await refreshUserData(user)
+      result = await new Promise((resolve, reject) => {
+        let settled = false
 
-      setCart([])
+        const finish = (callback, value) => {
+          if (settled) return
+          settled = true
+          callback(value)
+        }
 
-      notify('Order placed ♡')
+        const options = {
+          key: paymentOrder.keyId,
+          amount: paymentOrder.order.amount,
+          currency: paymentOrder.order.currency || 'INR',
+          name: 'YarnTales',
+          description: 'Handmade crochet order',
+          order_id: paymentOrder.order.id,
+          prefill: {
+            name: shippingAddress.name,
+            contact: shippingAddress.phone,
+            email: user?.email || '',
+          },
+          notes: {
+            yarnTalesOrder: paymentOrder.order.id,
+          },
+          theme: {
+            color: '#b79ad8',
+          },
 
-      navigate('tracking')
-    } catch (error) {
-      notify(error.message || 'Unable to place order')
+          // Razorpay expects `method` to be a single string when preselecting
+          // a payment method. The previous object form caused Checkout to show
+          // "Please select a payment option" even after choosing UPI/Card.
+          method: paymentMethod === 'UPI' ? 'upi' : 'card',
+
+          handler: async (response) => {
+            try {
+              const verified = await verifyPayment({
+                userId: currentUserId,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              })
+
+              finish(resolve, verified)
+            } catch (error) {
+              finish(reject, error)
+            }
+          },
+
+          modal: {
+            ondismiss: () => {
+              finish(
+                reject,
+                new Error('Payment cancelled. Your order was not placed.')
+              )
+            },
+          },
+        }
+
+        const razorpay = new window.Razorpay(options)
+
+        razorpay.on('payment.failed', (event) => {
+          const description = event?.error?.description || 'Razorpay payment failed.'
+          finish(reject, new Error(description))
+        })
+
+        razorpay.open()
+      })
     }
-  }
 
-  const handleAuth = async (payload) => {
+    if (!result?.order?.orderId) {
+      throw new Error('Order could not be created.')
+    }
+
+    setLastOrderId(result.order.orderId)
+    await refreshUserData(user)
+    setCart([])
+    notify(
+      paymentMethod === 'Cash on Delivery'
+        ? 'Order placed · Cash on Delivery ♡'
+        : 'Payment successful · order placed ♡'
+    )
+    navigate('tracking')
+  } catch (error) {
+    notify(error.message || 'Unable to complete your order')
+  }
+}
+
+const handleAuth = async (payload) => {
     try {
       const result = authMode === 'signin'
         ? await signIn(payload)

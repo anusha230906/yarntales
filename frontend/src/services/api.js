@@ -154,6 +154,43 @@ export async function getGiftRequests(userId) {
   return data.giftRequests || []
 }
 
+
+export async function createPaymentOrder(payload) {
+  return request('/api/payment/create', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function verifyPayment(payload) {
+  return request('/api/payment/verify', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function loadRazorpayCheckout() {
+  if (window.Razorpay) return Promise.resolve()
+
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-razorpay-checkout="true"]')
+
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true })
+      existing.addEventListener('error', () => reject(new Error('Unable to load Razorpay Checkout')), { once: true })
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+    script.async = true
+    script.dataset.razorpayCheckout = 'true'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Unable to load Razorpay Checkout'))
+    document.body.appendChild(script)
+  })
+}
+
 export async function createOrder(payload) {
   return request('/api/orders', {
     method: 'POST',
