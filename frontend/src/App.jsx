@@ -758,6 +758,11 @@ function AuthScreen({ mode, setMode, onSubmit }) {
           className="auth-form"
           onSubmit={(event) => {
             event.preventDefault()
+
+            if (!/^\d{10}$/.test(phone)) {
+              return
+            }
+
             onSubmit({ name, phone, email, password })
           }}
         >
@@ -777,9 +782,13 @@ function AuthScreen({ mode, setMode, onSubmit }) {
             Phone Number
             <input
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) =>
+                setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))
+              }
               placeholder="10-digit mobile number"
               inputMode="numeric"
+              maxLength={10}
+              pattern="[0-9]{10}"
               required
             />
           </label>
@@ -2113,11 +2122,12 @@ function CheckoutPage({
     if (
       !name.trim() ||
       !phone.trim() ||
+      !/^\d{10}$/.test(phone) ||
       !address.trim() ||
       !city.trim() ||
       !pincode.trim()
     ) {
-      notify('Please complete your delivery details')
+      notify('Please enter a valid 10-digit mobile number and complete all delivery details')
       return
     }
 
@@ -2157,9 +2167,14 @@ function CheckoutPage({
 
               <input
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) =>
+                  setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))
+                }
                 placeholder="Phone number"
                 inputMode="numeric"
+                maxLength={10}
+                pattern="[0-9]{10}"
+                required
               />
 
               <input
@@ -2814,6 +2829,11 @@ function AccountSettingsPage({ user, setUser, navigate, notify }) {
       return
     }
 
+    if (!/^\d{10}$/.test(phone)) {
+      notify('Please enter a valid 10-digit mobile number')
+      return
+    }
+
     setSaving(true)
 
     // There's no backend endpoint yet to persist profile edits, so we save
@@ -2861,8 +2881,14 @@ function AccountSettingsPage({ user, setUser, navigate, notify }) {
           <input
             className="wide-input"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) =>
+              setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))
+            }
             placeholder="Your phone number"
+            inputMode="numeric"
+            maxLength={10}
+            pattern="[0-9]{10}"
+            required
           />
         </BuilderStep>
 
