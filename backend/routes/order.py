@@ -9,6 +9,10 @@ import razorpay
 from config import db, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
 
 
+# ============================================================
+# BLUEPRINT
+# ============================================================
+
 order_bp = Blueprint("order", __name__)
 
 
@@ -25,13 +29,13 @@ if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# HELPER: CONVERT OBJECT IDS
 # ============================================================
 
 def convert_object_ids(data):
     """
-    Convert MongoDB ObjectId values into strings so they can
-    safely be returned as JSON.
+    Convert MongoDB ObjectId values into strings
+    so they can safely be returned as JSON.
     """
 
     if isinstance(data, ObjectId):
@@ -52,46 +56,141 @@ def convert_object_ids(data):
     return data
 
 
+# ============================================================
+# HELPER: FIND USER
+# ============================================================
+
 def find_user(user_id):
     """
-    Find a user by either MongoDB ObjectId or string userId.
+    Find user using:
+    1. Application userId
+    2. MongoDB _id
     """
 
-    try:
-        if ObjectId.is_valid(user_id):
-            user = db.users.find_one({
-                "_id": ObjectId(user_id)
-            })
+    if not user_id:
+        return None
 
-            if user:
-                return user
-    except Exception:
-        pass
+    # --------------------------------------------------------
+    # Try application userId
+    # --------------------------------------------------------
 
     user = db.users.find_one({
-        "userId": user_id
+        "userId": str(user_id)
     })
 
     if user:
         return user
 
+    # --------------------------------------------------------
+    # Try MongoDB _id
+    # --------------------------------------------------------
+
+    try:
+
+        if ObjectId.is_valid(str(user_id)):
+
+            user = db.users.find_one({
+                "_id": ObjectId(str(user_id))
+            })
+
+            if user:
+                return user
+
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
+    # Try legacy id field
+    # --------------------------------------------------------
+
     user = db.users.find_one({
-        "id": user_id
+        "id": str(user_id)
     })
 
-    return user
+    if user:
+        return user
 
+    return None
+
+
+# ============================================================
+# HELPER: FIND PRODUCT
+# ============================================================
+
+def find_product(product_id):
+    """
+    Find a product using productId, MongoDB _id,
+    or legacy id field.
+    """
+
+    if not product_id:
+        return None
+
+    # --------------------------------------------------------
+    # Try productId
+    # --------------------------------------------------------
+
+    product = db.products.find_one({
+        "productId": str(product_id)
+    })
+
+    if product:
+        return product
+
+    # --------------------------------------------------------
+    # Try MongoDB _id
+    # --------------------------------------------------------
+
+    try:
+
+        if ObjectId.is_valid(str(product_id)):
+
+            product = db.products.find_one({
+                "_id": ObjectId(str(product_id))
+            })
+
+            if product:
+                return product
+
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
+    # Try legacy id
+    # --------------------------------------------------------
+
+    product = db.products.find_one({
+        "id": str(product_id)
+    })
+
+    if product:
+        return product
+
+    return None
+
+
+# ============================================================
+# HELPER: CALCULATE ORDER ITEMS
+# ============================================================
 
 def calculate_order_items(items):
     """
-    Validate cart items against products in MongoDB and
-    calculate the final order total using database prices.
+    Validate cart products against MongoDB and calculate
+    the final order total.
+
+    MongoDB schema requires:
+        items.productId -> ObjectId
+        items.subtotal  -> greater than 0
     """
 
     calculated_items = []
-    total_amount = 0
+    total = 0
 
     for item in items:
+
+        # ----------------------------------------------------
+        # Product ID
+        # ----------------------------------------------------
 
         product_id = (
             item.get("productId")
@@ -99,7 +198,17 @@ def calculate_order_items(items):
             or item.get("_id")
         )
 
-        quantity = item.get("quantity", 1)
+        if not product_id:
+            continue
+
+        # ----------------------------------------------------
+        # Quantity
+        # ----------------------------------------------------
+
+        quantity = item.get(
+            "quantity",
+            1
+        )
 
         try:
             quantity = int(quantity)
@@ -109,76 +218,127 @@ def calculate_order_items(items):
         if quantity < 1:
             quantity = 1
 
-        if not product_id:
+        # ----------------------------------------------------
+        # Find product
+        # ----------------------------------------------------
+
+        product = find_product(product_id)
+
+        if not product:
+            print(
+                "Product not found:",
+                product_id
+            )
             continue
 
-        product = None
+        # ----------------------------------------------------
+        # MongoDB product ID
+        # ----------------------------------------------------
 
-        # Try ObjectId
-        try:
-            if ObjectId.is_valid(str(product_id)):
-                product = db.products.find_one({
-                    "_id": ObjectId(str(product_id))
-                })
-        except Exception:
-            pass
+        mongo_product_id = product.get("_id")
 
-        # Try productId field
-        if not product:
-            product = db.products.find_one({
-                "productId": str(product_id)
-            })
-
-        # Try id field
-        if not product:
-            product = db.products.find_one({
-                "id": str(product_id)
-            })
-
-        if not product:
+        if not mongo_product_id:
+            print(
+                "Product has no MongoDB _id:",
+                product_id
+            )
             continue
 
-        price = product.get("price", 0)
+        # ----------------------------------------------------
+        # Price
+        #
+        # Database documentation/schema uses basePrice.
+        # Fall back to price for compatibility.
+        # ----------------------------------------------------
+
+        price = product.get(
+            "basePrice",
+            product.get(
+                "price",
+                0
+            )
+        )
 
         try:
             price = float(price)
         except (TypeError, ValueError):
             price = 0
 
+        # ----------------------------------------------------
+        # Subtotal
+        # ----------------------------------------------------
+
         subtotal = price * quantity
-        total_amount += subtotal
+
+        # MongoDB schema requires subtotal > 0
+        if subtotal <= 0:
+            print(
+                "Invalid product subtotal:",
+                product_id,
+                subtotal
+            )
+            continue
+
+        total += subtotal
+
+        # ----------------------------------------------------
+        # Product name
+        # ----------------------------------------------------
+
+        product_name = product.get(
+            "name",
+            product.get(
+                "title",
+                "Product"
+            )
+        )
+
+        # ----------------------------------------------------
+        # Product image
+        # ----------------------------------------------------
+
+        product_image = product.get(
+            "image",
+            product.get(
+                "imageUrl",
+                ""
+            )
+        )
+
+        # ----------------------------------------------------
+        # Store order item
+        # ----------------------------------------------------
 
         calculated_items.append({
-            "productId": str(
-                product.get("productId")
-                or product.get("_id")
-            ),
-            "name": product.get(
-                "name",
-                product.get("title", "Product")
-            ),
-            "price": price,
+            "productId": mongo_product_id,
+            "name": product_name,
             "quantity": quantity,
+            "price": price,
             "subtotal": subtotal,
-            "image": product.get(
-                "image",
-                product.get("imageUrl", "")
-            ),
+            "image": product_image
         })
 
-    return calculated_items, total_amount
+    return calculated_items, total
 
 
 # ============================================================
-# CREATE RAZORPAY PAYMENT ORDER
+# RAZORPAY: CREATE PAYMENT ORDER
 # ============================================================
 
-@order_bp.route("/api/payment/create", methods=["POST"])
+@order_bp.route(
+    "/api/payment/create",
+    methods=["POST"]
+)
 def create_payment():
 
     try:
 
+        # ----------------------------------------------------
+        # Check Razorpay configuration
+        # ----------------------------------------------------
+
         if not razorpay_client:
+
             return jsonify({
                 "error": "Razorpay is not configured"
             }), 500
@@ -186,13 +346,19 @@ def create_payment():
         data = request.get_json()
 
         if not data:
+
             return jsonify({
                 "error": "Request body is required"
             }), 400
 
+        # ----------------------------------------------------
+        # Amount
+        # ----------------------------------------------------
+
         amount = data.get("amount")
 
         if amount is None:
+
             return jsonify({
                 "error": "Amount is required"
             }), 400
@@ -200,23 +366,34 @@ def create_payment():
         try:
             amount = float(amount)
         except (TypeError, ValueError):
+
             return jsonify({
                 "error": "Invalid amount"
             }), 400
 
         if amount <= 0:
+
             return jsonify({
                 "error": "Amount must be greater than zero"
             }), 400
 
-        # Razorpay expects amount in paise
-        amount_in_paise = int(round(amount * 100))
+        # ----------------------------------------------------
+        # Razorpay uses paise
+        # ----------------------------------------------------
+
+        amount_in_paise = int(
+            round(amount * 100)
+        )
 
         payment_data = {
             "amount": amount_in_paise,
             "currency": "INR",
-            "receipt": str(uuid.uuid4())[:40],
+            "receipt": str(uuid.uuid4())[:40]
         }
+
+        # ----------------------------------------------------
+        # Create Razorpay order
+        # ----------------------------------------------------
 
         razorpay_order = razorpay_client.order.create(
             data=payment_data
@@ -229,7 +406,10 @@ def create_payment():
 
     except Exception as e:
 
-        print("Razorpay create order error:", str(e))
+        print(
+            "Razorpay create order error:",
+            str(e)
+        )
 
         return jsonify({
             "error": "Failed to create payment order",
@@ -238,15 +418,23 @@ def create_payment():
 
 
 # ============================================================
-# VERIFY RAZORPAY PAYMENT
+# RAZORPAY: VERIFY PAYMENT
 # ============================================================
 
-@order_bp.route("/api/payment/verify", methods=["POST"])
+@order_bp.route(
+    "/api/payment/verify",
+    methods=["POST"]
+)
 def verify_payment():
 
     try:
 
+        # ----------------------------------------------------
+        # Check Razorpay configuration
+        # ----------------------------------------------------
+
         if not razorpay_client:
+
             return jsonify({
                 "error": "Razorpay is not configured"
             }), 500
@@ -254,9 +442,14 @@ def verify_payment():
         data = request.get_json()
 
         if not data:
+
             return jsonify({
                 "error": "Request body is required"
             }), 400
+
+        # ----------------------------------------------------
+        # Razorpay details
+        # ----------------------------------------------------
 
         razorpay_order_id = data.get(
             "razorpay_order_id"
@@ -275,14 +468,19 @@ def verify_payment():
             razorpay_payment_id,
             razorpay_signature
         ]):
+
             return jsonify({
                 "error": "Missing Razorpay payment details"
             }), 400
 
+        # ----------------------------------------------------
+        # Verify signature
+        # ----------------------------------------------------
+
         verification_data = {
             "razorpay_order_id": razorpay_order_id,
             "razorpay_payment_id": razorpay_payment_id,
-            "razorpay_signature": razorpay_signature,
+            "razorpay_signature": razorpay_signature
         }
 
         razorpay_client.utility.verify_payment_signature(
@@ -296,7 +494,10 @@ def verify_payment():
 
     except Exception as e:
 
-        print("Razorpay verification error:", str(e))
+        print(
+            "Razorpay verification error:",
+            str(e)
+        )
 
         return jsonify({
             "success": False,
@@ -309,14 +510,22 @@ def verify_payment():
 # CREATE ORDER
 # ============================================================
 
-@order_bp.route("/api/orders", methods=["POST"])
+@order_bp.route(
+    "/api/orders",
+    methods=["POST"]
+)
 def create_order():
 
     try:
 
+        # ----------------------------------------------------
+        # Request data
+        # ----------------------------------------------------
+
         data = request.get_json()
 
         if not data:
+
             return jsonify({
                 "error": "Request body is required"
             }), 400
@@ -325,19 +534,40 @@ def create_order():
         # USER
         # ----------------------------------------------------
 
-        user_id = data.get("userId")
+        user_id = data.get(
+            "userId"
+        )
 
         if not user_id:
+
             return jsonify({
                 "error": "User ID is required"
             }), 400
 
-        user = find_user(user_id)
+        user = find_user(
+            user_id
+        )
 
         if not user:
+
             return jsonify({
                 "error": "User not found"
             }), 404
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # MongoDB schema requires userId to be ObjectId.
+        # ----------------------------------------------------
+
+        mongo_user_id = user.get(
+            "_id"
+        )
+
+        if not mongo_user_id:
+
+            return jsonify({
+                "error": "User MongoDB ID not found"
+            }), 400
 
         # ----------------------------------------------------
         # SHIPPING ADDRESS
@@ -348,6 +578,7 @@ def create_order():
         )
 
         if not shipping_address:
+
             return jsonify({
                 "error": "Shipping address is required"
             }), 400
@@ -356,24 +587,35 @@ def create_order():
         # ITEMS
         # ----------------------------------------------------
 
-        items = data.get("items", [])
+        items = data.get(
+            "items",
+            []
+        )
 
         if not items:
+
             return jsonify({
                 "error": "Order must contain at least one item"
             }), 400
 
         # ----------------------------------------------------
-        # CALCULATE TOTAL
+        # CALCULATE ITEMS + TOTAL
         # ----------------------------------------------------
 
-        calculated_items, total_amount = calculate_order_items(
+        calculated_items, total = calculate_order_items(
             items
         )
 
         if not calculated_items:
+
             return jsonify({
                 "error": "No valid products found in order"
+            }), 400
+
+        if total <= 0:
+
+            return jsonify({
+                "error": "Order total must be greater than zero"
             }), 400
 
         # ----------------------------------------------------
@@ -394,35 +636,48 @@ def create_order():
             "paymentReference"
         )
 
-        # Only mark as paid when frontend explicitly sends
-        # a successful payment status.
+        # Only mark payment as paid when explicitly
+        # provided as paid by the frontend.
         if payment_status != "paid":
+
             payment_status = "pending"
 
         # ----------------------------------------------------
-        # ORDER
+        # ORDER ID
+        # ----------------------------------------------------
+
+        order_id = str(
+            uuid.uuid4()
+        )
+
+        # ----------------------------------------------------
+        # CREATE ORDER DOCUMENT
+        #
+        # IMPORTANT:
+        # This structure matches the MongoDB validator:
+        #
+        # userId     -> ObjectId
+        # items      -> array
+        # productId  -> ObjectId
+        # subtotal   -> > 0
+        # total      -> required
+        # status     -> required
+        # createdAt  -> required
         # ----------------------------------------------------
 
         order = {
-            "orderId": str(uuid.uuid4()),
 
-            "userId": str(user_id),
+            "orderId": order_id,
 
-            "customerName": user.get(
-                "name",
-                user.get("fullName", "")
-            ),
-
-            "customerEmail": user.get(
-                "email",
-                ""
-            ),
+            "userId": mongo_user_id,
 
             "items": calculated_items,
 
-            "shippingAddress": shipping_address,
+            "total": total,
 
-            "totalAmount": total_amount,
+            "status": "order_confirmed",
+
+            "createdAt": datetime.utcnow(),
 
             "paymentMethod": payment_method,
 
@@ -430,47 +685,73 @@ def create_order():
 
             "paymentReference": payment_reference,
 
-            "status": "order_confirmed",
+            "shippingAddress": shipping_address,
 
-            "createdAt": datetime.utcnow(),
+            "customerName": user.get(
+                "name",
+                user.get(
+                    "fullName",
+                    ""
+                )
+            ),
+
+            "customerEmail": user.get(
+                "email",
+                ""
+            )
         }
 
         # ----------------------------------------------------
-        # SAVE ORDER FIRST
+        # SAVE ORDER
         # ----------------------------------------------------
 
-        db.orders.insert_one(order)
+        db.orders.insert_one(
+            order
+        )
 
         # ----------------------------------------------------
-        # IMPORTANT
-        # ----------------------------------------------------
+        # IMPORTANT:
         #
-        # DO NOT send Gmail SMTP email here.
+        # DO NOT SEND GMAIL SMTP HERE.
         #
-        # Railway can block / delay SMTP connections to
-        # smtp.gmail.com:587.
+        # Railway can block/delay SMTP connections.
+        # Sending email here previously caused:
         #
-        # If email is sent here, the customer's order request
-        # waits for Gmail and Gunicorn can kill the worker.
+        # WORKER TIMEOUT
         #
-        # The order must always be saved and returned first.
-        #
+        # The order is now saved first and returned
+        # immediately.
         # ----------------------------------------------------
 
-        order = convert_object_ids(order)
+        order = convert_object_ids(
+            order
+        )
+
+        # ----------------------------------------------------
+        # SUCCESS
+        # ----------------------------------------------------
 
         return jsonify({
+
             "message": "Order created successfully",
+
             "order": order
+
         }), 201
 
     except Exception as e:
 
-        print("Create order error:", str(e))
+        print(
+            "Create order error:",
+            str(e)
+        )
 
         return jsonify({
+
             "error": "Failed to create order",
+
             "details": str(e)
+
         }), 500
 
 
@@ -486,16 +767,50 @@ def get_user_orders(user_id):
 
     try:
 
+        # ----------------------------------------------------
+        # Find user
+        # ----------------------------------------------------
+
+        user = find_user(
+            user_id
+        )
+
+        if not user:
+
+            return jsonify({
+                "error": "User not found"
+            }), 404
+
+        mongo_user_id = user.get(
+            "_id"
+        )
+
+        if not mongo_user_id:
+
+            return jsonify({
+                "error": "User MongoDB ID not found"
+            }), 400
+
+        # ----------------------------------------------------
+        # Find orders
+        # ----------------------------------------------------
+
         orders = list(
             db.orders.find({
-                "userId": str(user_id)
+                "userId": mongo_user_id
             }).sort(
                 "createdAt",
                 -1
             )
         )
 
-        orders = convert_object_ids(orders)
+        # ----------------------------------------------------
+        # Convert ObjectIds
+        # ----------------------------------------------------
+
+        orders = convert_object_ids(
+            orders
+        )
 
         return jsonify({
             "orders": orders
@@ -503,7 +818,10 @@ def get_user_orders(user_id):
 
     except Exception as e:
 
-        print("Get user orders error:", str(e))
+        print(
+            "Get user orders error:",
+            str(e)
+        )
 
         return jsonify({
             "error": "Failed to fetch orders",
@@ -523,16 +841,40 @@ def get_order(order_id):
 
     try:
 
+        order = None
+
+        # ----------------------------------------------------
+        # Find using custom orderId
+        # ----------------------------------------------------
+
         order = db.orders.find_one({
             "orderId": str(order_id)
         })
 
+        # ----------------------------------------------------
         # Fallback to MongoDB _id
-        if not order and ObjectId.is_valid(order_id):
+        # ----------------------------------------------------
 
-            order = db.orders.find_one({
-                "_id": ObjectId(order_id)
-            })
+        if not order:
+
+            try:
+
+                if ObjectId.is_valid(
+                    str(order_id)
+                ):
+
+                    order = db.orders.find_one({
+                        "_id": ObjectId(
+                            str(order_id)
+                        )
+                    })
+
+            except Exception:
+                pass
+
+        # ----------------------------------------------------
+        # Not found
+        # ----------------------------------------------------
 
         if not order:
 
@@ -540,7 +882,13 @@ def get_order(order_id):
                 "error": "Order not found"
             }), 404
 
-        order = convert_object_ids(order)
+        # ----------------------------------------------------
+        # Convert ObjectIds
+        # ----------------------------------------------------
+
+        order = convert_object_ids(
+            order
+        )
 
         return jsonify({
             "order": order
@@ -548,7 +896,10 @@ def get_order(order_id):
 
     except Exception as e:
 
-        print("Get order error:", str(e))
+        print(
+            "Get order error:",
+            str(e)
+        )
 
         return jsonify({
             "error": "Failed to fetch order",
