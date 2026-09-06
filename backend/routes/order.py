@@ -35,6 +35,7 @@ if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+
 RESEND_FROM_EMAIL = os.getenv(
     "RESEND_FROM_EMAIL",
     "onboarding@resend.dev"
@@ -143,7 +144,7 @@ def find_product(product_id):
     except Exception:
         pass
 
-    # legacy id
+    # Legacy id
     product = db.products.find_one({
         "id": str(product_id)
     })
@@ -187,23 +188,22 @@ def calculate_order_items(items):
         if quantity < 1:
             quantity = 1
 
-        # Find product
         product = find_product(product_id)
 
         if not product:
+
             print(
                 "Product not found:",
                 product_id
             )
+
             continue
 
-        # MongoDB _id
         mongo_product_id = product.get("_id")
 
         if not mongo_product_id:
             continue
 
-        # Product price
         price = product.get(
             "basePrice",
             product.get(
@@ -219,13 +219,14 @@ def calculate_order_items(items):
 
         subtotal = price * quantity
 
-        # Schema requires subtotal > 0
         if subtotal <= 0:
+
             print(
                 "Invalid subtotal:",
                 product_id,
                 subtotal
             )
+
             continue
 
         total += subtotal
@@ -248,33 +249,35 @@ def calculate_order_items(items):
 
         calculated_items.append({
 
-            "productId": mongo_product_id,
+            "productId":
+                mongo_product_id,
 
-            "name": product_name,
+            "name":
+                product_name,
 
-            "quantity": quantity,
+            "quantity":
+                quantity,
 
-            "price": price,
+            "price":
+                price,
 
-            "subtotal": subtotal,
+            "subtotal":
+                subtotal,
 
-            "image": product_image
+            "image":
+                product_image
         })
 
     return calculated_items, total
 
 
 # ============================================================
-# SEND ORDER EMAIL THROUGH RESEND
+# SEND OWNER ORDER EMAIL
 # ============================================================
 
 def send_new_order_email(order, user):
 
     try:
-
-        # ----------------------------------------------------
-        # Check configuration
-        # ----------------------------------------------------
 
         if not RESEND_API_KEY:
 
@@ -294,10 +297,6 @@ def send_new_order_email(order, user):
 
             return False
 
-        # ----------------------------------------------------
-        # Customer details
-        # ----------------------------------------------------
-
         customer_name = user.get(
             "name",
             user.get(
@@ -310,10 +309,6 @@ def send_new_order_email(order, user):
             "email",
             "Not provided"
         )
-
-        # ----------------------------------------------------
-        # Order details
-        # ----------------------------------------------------
 
         order_id = order.get(
             "orderId",
@@ -344,7 +339,7 @@ def send_new_order_email(order, user):
         )
 
         # ----------------------------------------------------
-        # Shipping address
+        # SHIPPING ADDRESS
         # ----------------------------------------------------
 
         shipping = order.get(
@@ -382,11 +377,10 @@ def send_new_order_email(order, user):
             )
 
         if not shipping_address:
-
             shipping_address = "Not provided"
 
         # ----------------------------------------------------
-        # Items HTML
+        # ITEMS
         # ----------------------------------------------------
 
         items_html = ""
@@ -437,7 +431,7 @@ def send_new_order_email(order, user):
             """
 
         # ----------------------------------------------------
-        # Email HTML
+        # ADMIN EMAIL HTML
         # ----------------------------------------------------
 
         html = f"""
@@ -479,12 +473,9 @@ def send_new_order_email(order, user):
 
                 </div>
 
-
                 <div style="padding:25px;">
 
-                    <h2>
-                        Order Details
-                    </h2>
+                    <h2>Order Details</h2>
 
                     <p>
                         <strong>Order ID:</strong>
@@ -498,10 +489,7 @@ def send_new_order_email(order, user):
 
                     <hr>
 
-
-                    <h2>
-                        Customer
-                    </h2>
+                    <h2>Customer</h2>
 
                     <p>
                         <strong>Name:</strong>
@@ -515,10 +503,7 @@ def send_new_order_email(order, user):
 
                     <hr>
 
-
-                    <h2>
-                        Items
-                    </h2>
+                    <h2>Items</h2>
 
                     <table style="
                         width:100%;
@@ -527,34 +512,21 @@ def send_new_order_email(order, user):
 
                         <thead>
 
-                            <tr style="
-                                background:#f3edf9;
-                            ">
+                            <tr style="background:#f3edf9;">
 
-                                <th style="
-                                    padding:10px;
-                                    text-align:left;
-                                ">
+                                <th style="padding:10px;text-align:left;">
                                     Product
                                 </th>
 
-                                <th style="
-                                    padding:10px;
-                                ">
+                                <th style="padding:10px;">
                                     Qty
                                 </th>
 
-                                <th style="
-                                    padding:10px;
-                                    text-align:right;
-                                ">
+                                <th style="padding:10px;text-align:right;">
                                     Price
                                 </th>
 
-                                <th style="
-                                    padding:10px;
-                                    text-align:right;
-                                ">
+                                <th style="padding:10px;text-align:right;">
                                     Subtotal
                                 </th>
 
@@ -563,31 +535,18 @@ def send_new_order_email(order, user):
                         </thead>
 
                         <tbody>
-
                             {items_html}
-
                         </tbody>
 
                     </table>
 
-
-                    <h2 style="
-                        text-align:right;
-                        margin-top:20px;
-                    ">
-
-                        Total:
-                        ₹{total:.2f}
-
+                    <h2 style="text-align:right;margin-top:20px;">
+                        Total: ₹{total:.2f}
                     </h2>
-
 
                     <hr>
 
-
-                    <h2>
-                        Payment
-                    </h2>
+                    <h2>Payment</h2>
 
                     <p>
                         <strong>Method:</strong>
@@ -604,20 +563,15 @@ def send_new_order_email(order, user):
                         {payment_reference}
                     </p>
 
-
                     <hr>
 
-
-                    <h2>
-                        Shipping Address
-                    </h2>
+                    <h2>Shipping Address</h2>
 
                     <p>
                         {shipping_address}
                     </p>
 
                 </div>
-
 
                 <div style="
                     padding:20px;
@@ -646,16 +600,11 @@ def send_new_order_email(order, user):
         </html>
         """
 
-        # ----------------------------------------------------
-        # Send using Resend API
-        # ----------------------------------------------------
-
         params = {
             "from": RESEND_FROM_EMAIL,
             "to": [ADMIN_EMAIL],
-            "subject": (
-                f"🧶 New YarnTales Order - {order_id}"
-            ),
+            "subject":
+                f"🧶 New YarnTales Order - {order_id}",
             "html": html
         }
 
@@ -672,11 +621,443 @@ def send_new_order_email(order, user):
 
     except Exception as e:
 
-        # IMPORTANT:
-        # Email failure must NEVER make the order fail.
-
         print(
             "Order email failed:",
+            str(e)
+        )
+
+        return False
+
+
+# ============================================================
+# SEND CUSTOMER ORDER CONFIRMATION EMAIL
+# ============================================================
+
+def send_customer_order_confirmation_email(order, user):
+
+    print(
+        "CUSTOMER EMAIL FUNCTION STARTED"
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # CONFIGURATION
+        # ----------------------------------------------------
+
+        if not RESEND_API_KEY:
+
+            print(
+                "Customer confirmation email skipped: "
+                "RESEND_API_KEY is not configured."
+            )
+
+            return False
+
+        # ----------------------------------------------------
+        # CUSTOMER EMAIL
+        #
+        # Prefer the email saved inside the order.
+        # Fall back to the user document.
+        # ----------------------------------------------------
+
+        customer_email = (
+            order.get("customerEmail")
+            or user.get("email")
+        )
+
+        print(
+            "CUSTOMER EMAIL RECIPIENT:",
+            customer_email
+        )
+
+        if not customer_email:
+
+            print(
+                "Customer confirmation email skipped: "
+                "Customer email not found."
+            )
+
+            return False
+
+        customer_email = str(
+            customer_email
+        ).strip()
+
+        if not customer_email:
+
+            print(
+                "Customer confirmation email skipped: "
+                "Customer email is empty."
+            )
+
+            return False
+
+        # ----------------------------------------------------
+        # CUSTOMER NAME
+        # ----------------------------------------------------
+
+        customer_name = (
+            order.get("customerName")
+            or user.get("name")
+            or user.get("fullName")
+            or "Customer"
+        )
+
+        # ----------------------------------------------------
+        # ORDER DETAILS
+        # ----------------------------------------------------
+
+        order_id = order.get(
+            "orderId",
+            "N/A"
+        )
+
+        total = order.get(
+            "total",
+            0
+        )
+
+        payment_method = order.get(
+            "paymentMethod",
+            "COD"
+        )
+
+        payment_status = order.get(
+            "paymentStatus",
+            "pending"
+        )
+
+        # ----------------------------------------------------
+        # ITEMS
+        # ----------------------------------------------------
+
+        items_html = ""
+
+        for item in order.get(
+            "items",
+            []
+        ):
+
+            name = item.get(
+                "name",
+                "Product"
+            )
+
+            quantity = item.get(
+                "quantity",
+                1
+            )
+
+            subtotal = item.get(
+                "subtotal",
+                0
+            )
+
+            items_html += f"""
+            <tr>
+
+                <td style="
+                    padding:12px;
+                    border-bottom:1px solid #eee;
+                ">
+                    {name}
+                </td>
+
+                <td style="
+                    padding:12px;
+                    border-bottom:1px solid #eee;
+                    text-align:center;
+                ">
+                    {quantity}
+                </td>
+
+                <td style="
+                    padding:12px;
+                    border-bottom:1px solid #eee;
+                    text-align:right;
+                ">
+                    ₹{subtotal:.2f}
+                </td>
+
+            </tr>
+            """
+
+        # ----------------------------------------------------
+        # CUSTOMER EMAIL HTML
+        # ----------------------------------------------------
+
+        html = f"""
+        <!DOCTYPE html>
+
+        <html>
+
+        <body style="
+            margin:0;
+            padding:0;
+            background:#f7f3fb;
+            font-family:Arial,sans-serif;
+            color:#333;
+        ">
+
+            <div style="
+                max-width:650px;
+                margin:30px auto;
+                background:white;
+                border-radius:14px;
+                overflow:hidden;
+                box-shadow:0 2px 10px rgba(0,0,0,0.08);
+            ">
+
+                <!-- HEADER -->
+
+                <div style="
+                    background:#b79ad8;
+                    padding:30px;
+                    text-align:center;
+                    color:white;
+                ">
+
+                    <h1 style="
+                        margin:0;
+                        font-size:28px;
+                    ">
+                        🧶 YarnTales
+                    </h1>
+
+                    <p style="
+                        margin:10px 0 0;
+                        font-size:16px;
+                    ">
+                        Order Confirmed! 💜
+                    </p>
+
+                </div>
+
+                <!-- CONTENT -->
+
+                <div style="padding:30px;">
+
+                    <h2>
+                        Hi {customer_name}! 👋
+                    </h2>
+
+                    <p style="line-height:1.6;">
+
+                        Thank you for shopping with
+                        YarnTales!
+
+                        Your order has been successfully
+                        placed and is now confirmed.
+
+                    </p>
+
+                    <!-- ORDER ID -->
+
+                    <div style="
+                        background:#f3edf9;
+                        padding:18px;
+                        border-radius:10px;
+                        margin:20px 0;
+                        text-align:center;
+                    ">
+
+                        <p style="
+                            margin:0;
+                            font-size:13px;
+                            color:#777;
+                        ">
+                            ORDER ID
+                        </p>
+
+                        <h2 style="
+                            margin:6px 0 0;
+                            color:#7d5ca6;
+                        ">
+                            {order_id}
+                        </h2>
+
+                    </div>
+
+                    <!-- ORDER SUMMARY -->
+
+                    <h3>
+                        Order Summary
+                    </h3>
+
+                    <table style="
+                        width:100%;
+                        border-collapse:collapse;
+                    ">
+
+                        <thead>
+
+                            <tr style="
+                                background:#f3edf9;
+                            ">
+
+                                <th style="
+                                    padding:12px;
+                                    text-align:left;
+                                ">
+                                    Product
+                                </th>
+
+                                <th style="
+                                    padding:12px;
+                                    text-align:center;
+                                ">
+                                    Qty
+                                </th>
+
+                                <th style="
+                                    padding:12px;
+                                    text-align:right;
+                                ">
+                                    Amount
+                                </th>
+
+                            </tr>
+
+                        </thead>
+
+                        <tbody>
+
+                            {items_html}
+
+                        </tbody>
+
+                    </table>
+
+                    <!-- TOTAL -->
+
+                    <h2 style="
+                        text-align:right;
+                        margin-top:20px;
+                    ">
+
+                        Total:
+                        ₹{total:.2f}
+
+                    </h2>
+
+                    <hr style="
+                        border:none;
+                        border-top:1px solid #eee;
+                        margin:25px 0;
+                    ">
+
+                    <!-- PAYMENT -->
+
+                    <h3>
+                        Payment Details
+                    </h3>
+
+                    <p>
+                        <strong>Method:</strong>
+                        {payment_method}
+                    </p>
+
+                    <p>
+                        <strong>Status:</strong>
+                        {payment_status}
+                    </p>
+
+                    <!-- TRACKING -->
+
+                    <div style="
+                        background:#faf7fd;
+                        border:1px solid #eadff5;
+                        padding:20px;
+                        border-radius:10px;
+                        margin-top:25px;
+                    ">
+
+                        <h3 style="margin-top:0;">
+                            📦 Order Tracking
+                        </h3>
+
+                        <p>
+                            Your current order status is:
+                        </p>
+
+                        <p style="
+                            font-size:18px;
+                            font-weight:bold;
+                            color:#7d5ca6;
+                        ">
+                            Order Confirmed
+                        </p>
+
+                        <p>
+                            We'll email you whenever your
+                            order moves to the next stage.
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <!-- FOOTER -->
+
+                <div style="
+                    padding:20px;
+                    text-align:center;
+                    background:#f3edf9;
+                    color:#777;
+                ">
+
+                    <p style="margin:0;">
+                        YarnTales 🧶
+                    </p>
+
+                    <p style="
+                        margin:6px 0 0;
+                        font-size:13px;
+                    ">
+                        Handmade with love.
+                    </p>
+
+                </div>
+
+            </div>
+
+        </body>
+
+        </html>
+        """
+
+        # ----------------------------------------------------
+        # SEND CUSTOMER EMAIL
+        # ----------------------------------------------------
+
+        params = {
+            "from": RESEND_FROM_EMAIL,
+            "to": [customer_email],
+            "subject":
+                f"🧶 YarnTales Order Confirmed - {order_id}",
+            "html": html
+        }
+
+        print(
+            "CUSTOMER EMAIL SENDING..."
+        )
+
+        email = resend.Emails.send(
+            params
+        )
+
+        print(
+            "Customer confirmation email sent successfully:",
+            email
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            "Customer confirmation email failed:",
             str(e)
         )
 
@@ -698,7 +1079,8 @@ def create_payment():
         if not razorpay_client:
 
             return jsonify({
-                "error": "Razorpay is not configured"
+                "error":
+                    "Razorpay is not configured"
             }), 500
 
         data = request.get_json()
@@ -706,7 +1088,8 @@ def create_payment():
         if not data:
 
             return jsonify({
-                "error": "Request body is required"
+                "error":
+                    "Request body is required"
             }), 400
 
         amount = data.get(
@@ -716,7 +1099,8 @@ def create_payment():
         if amount is None:
 
             return jsonify({
-                "error": "Amount is required"
+                "error":
+                    "Amount is required"
             }), 400
 
         try:
@@ -728,13 +1112,15 @@ def create_payment():
         except (TypeError, ValueError):
 
             return jsonify({
-                "error": "Invalid amount"
+                "error":
+                    "Invalid amount"
             }), 400
 
         if amount <= 0:
 
             return jsonify({
-                "error": "Amount must be greater than zero"
+                "error":
+                    "Amount must be greater than zero"
             }), 400
 
         amount_in_paise = int(
@@ -745,13 +1131,14 @@ def create_payment():
 
         payment_data = {
 
-            "amount": amount_in_paise,
+            "amount":
+                amount_in_paise,
 
-            "currency": "INR",
+            "currency":
+                "INR",
 
-            "receipt": str(
-                uuid.uuid4()
-            )[:40]
+            "receipt":
+                str(uuid.uuid4())[:40]
         }
 
         razorpay_order = (
@@ -762,9 +1149,11 @@ def create_payment():
 
         return jsonify({
 
-            "success": True,
+            "success":
+                True,
 
-            "order": razorpay_order
+            "order":
+                razorpay_order
 
         }), 200
 
@@ -780,7 +1169,8 @@ def create_payment():
             "error":
                 "Failed to create payment order",
 
-            "details": str(e)
+            "details":
+                str(e)
 
         }), 500
 
@@ -800,7 +1190,8 @@ def verify_payment():
         if not razorpay_client:
 
             return jsonify({
-                "error": "Razorpay is not configured"
+                "error":
+                    "Razorpay is not configured"
             }), 500
 
         data = request.get_json()
@@ -808,7 +1199,8 @@ def verify_payment():
         if not data:
 
             return jsonify({
-                "error": "Request body is required"
+                "error":
+                    "Request body is required"
             }), 400
 
         razorpay_order_id = data.get(
@@ -852,7 +1244,8 @@ def verify_payment():
 
         return jsonify({
 
-            "success": True,
+            "success":
+                True,
 
             "message":
                 "Payment verified successfully"
@@ -868,12 +1261,14 @@ def verify_payment():
 
         return jsonify({
 
-            "success": False,
+            "success":
+                False,
 
             "error":
                 "Payment verification failed",
 
-            "details": str(e)
+            "details":
+                str(e)
 
         }), 400
 
@@ -895,7 +1290,8 @@ def create_order():
         if not data:
 
             return jsonify({
-                "error": "Request body is required"
+                "error":
+                    "Request body is required"
             }), 400
 
         # ----------------------------------------------------
@@ -909,7 +1305,8 @@ def create_order():
         if not user_id:
 
             return jsonify({
-                "error": "User ID is required"
+                "error":
+                    "User ID is required"
             }), 400
 
         user = find_user(
@@ -919,7 +1316,8 @@ def create_order():
         if not user:
 
             return jsonify({
-                "error": "User not found"
+                "error":
+                    "User not found"
             }), 404
 
         mongo_user_id = user.get(
@@ -1003,8 +1401,27 @@ def create_order():
         )
 
         if payment_status != "paid":
-
             payment_status = "pending"
+
+        # ----------------------------------------------------
+        # CUSTOMER EMAIL
+        # ----------------------------------------------------
+
+        customer_email = (
+            user.get("email")
+            or ""
+        )
+
+        customer_name = (
+            user.get("name")
+            or user.get("fullName")
+            or ""
+        )
+
+        print(
+            "ORDER CUSTOMER EMAIL:",
+            customer_email
+        )
 
         # ----------------------------------------------------
         # ORDER
@@ -1047,19 +1464,10 @@ def create_order():
                 shipping_address,
 
             "customerName":
-                user.get(
-                    "name",
-                    user.get(
-                        "fullName",
-                        ""
-                    )
-                ),
+                customer_name,
 
             "customerEmail":
-                user.get(
-                    "email",
-                    ""
-                )
+                customer_email
         }
 
         # ----------------------------------------------------
@@ -1070,16 +1478,49 @@ def create_order():
             order
         )
 
+        print(
+            "ORDER SAVED:",
+            order_id
+        )
+
         # ----------------------------------------------------
-        # SEND OWNER EMAIL
-        #
-        # Email failure is caught internally and will NOT
-        # cause checkout to fail.
+        # ADMIN EMAIL
         # ----------------------------------------------------
 
-        send_new_order_email(
-            order,
-            user
+        print(
+            "STEP 1: Sending admin email..."
+        )
+
+        admin_email_result = (
+            send_new_order_email(
+                order,
+                user
+            )
+        )
+
+        print(
+            "STEP 1 RESULT:",
+            admin_email_result
+        )
+
+        # ----------------------------------------------------
+        # CUSTOMER EMAIL
+        # ----------------------------------------------------
+
+        print(
+            "STEP 2: Sending customer confirmation email..."
+        )
+
+        customer_email_result = (
+            send_customer_order_confirmation_email(
+                order,
+                user
+            )
+        )
+
+        print(
+            "STEP 2 RESULT:",
+            customer_email_result
         )
 
         # ----------------------------------------------------
