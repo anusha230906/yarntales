@@ -285,13 +285,12 @@ def send_new_order_email(order, user):
 
             return False
 
-        if not ADMIN_EMAIL:
-
+        # A customer email is required for the confirmation email.
+        customer_email = user.get("email", "")
+        if not customer_email or "@" not in str(customer_email):
             print(
-                "Order email skipped: "
-                "ADMIN_EMAIL is not configured."
+                "Order email skipped: customer email is missing or invalid."
             )
-
             return False
 
         # ----------------------------------------------------
@@ -308,7 +307,7 @@ def send_new_order_email(order, user):
 
         customer_email = user.get(
             "email",
-            "Not provided"
+            ""
         )
 
         # ----------------------------------------------------
@@ -470,11 +469,11 @@ def send_new_order_email(order, user):
                 ">
 
                     <h1 style="margin:0;">
-                        🧶 New YarnTales Order
+                        🧶 Your YarnTales Order is Confirmed!
                     </h1>
 
                     <p style="margin:8px 0 0;">
-                        A new order has been placed.
+                        Thank you for shopping with YarnTales. Your order has been successfully placed.
                     </p>
 
                 </div>
@@ -499,18 +498,13 @@ def send_new_order_email(order, user):
                     <hr>
 
 
-                    <h2>
-                        Customer
-                    </h2>
-
                     <p>
-                        <strong>Name:</strong>
-                        {customer_name}
+                        Hi <strong>{customer_name}</strong>,
                     </p>
 
                     <p>
-                        <strong>Email:</strong>
-                        {customer_email}
+                        We have received your order and payment successfully.
+                        Your current order status is <strong>Order Confirmed</strong>.
                     </p>
 
                     <hr>
@@ -650,11 +644,17 @@ def send_new_order_email(order, user):
         # Send using Resend API
         # ----------------------------------------------------
 
+        recipients = [str(customer_email)]
+
+        # Keep the existing admin notification as well, when configured.
+        if ADMIN_EMAIL and str(ADMIN_EMAIL).lower() != str(customer_email).lower():
+            recipients.append(str(ADMIN_EMAIL))
+
         params = {
             "from": RESEND_FROM_EMAIL,
-            "to": [ADMIN_EMAIL],
+            "to": recipients,
             "subject": (
-                f"🧶 New YarnTales Order - {order_id}"
+                f"🧶 YarnTales Order Confirmed - {order_id}"
             ),
             "html": html
         }
@@ -664,7 +664,7 @@ def send_new_order_email(order, user):
         )
 
         print(
-            "Order email sent successfully:",
+            "Order confirmation email sent successfully:",
             email
         )
 
