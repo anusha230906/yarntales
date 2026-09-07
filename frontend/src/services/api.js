@@ -217,3 +217,78 @@ export function clearSession() {
 }
 
 export { getUserId }
+
+// ------------------------------------------------------------------
+// SAVED ADDRESSES
+//
+// There's no backend endpoint for an address book yet, so this is
+// kept on the device (per signed-in user) the same way the cart/token
+// already lean on localStorage elsewhere in this file. It's enough to
+// power "Saved Addresses" on My Page and to prefill Checkout, and it
+// can be swapped for real API calls later without changing callers.
+// ------------------------------------------------------------------
+
+const addressesKey = (userId) => `yarntales-addresses-${userId}`
+
+export function getSavedAddresses(userId) {
+  if (!userId) return []
+  try {
+    const list = JSON.parse(localStorage.getItem(addressesKey(userId)))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+function persistAddresses(userId, list) {
+  localStorage.setItem(addressesKey(userId), JSON.stringify(list))
+  return list
+}
+
+export function saveAddress(userId, address) {
+  if (!userId) return []
+  const list = getSavedAddresses(userId)
+  const isFirst = list.length === 0
+
+  const entry = {
+    id: address.id || `addr_${Date.now()}`,
+    name: address.name || '',
+    phone: address.phone || '',
+    address: address.address || '',
+    city: address.city || '',
+    state: address.state || '',
+    pincode: address.pincode || '',
+    isDefault: Boolean(address.isDefault) || isFirst,
+  }
+
+  const withoutExisting = list.filter((item) => item.id !== entry.id)
+
+  const nextList = entry.isDefault
+    ? [...withoutExisting.map((item) => ({ ...item, isDefault: false })), entry]
+    : [...withoutExisting, entry]
+
+  return persistAddresses(userId, nextList)
+}
+
+export function deleteAddress(userId, addressId) {
+  if (!userId) return []
+  const list = getSavedAddresses(userId).filter((item) => item.id !== addressId)
+
+  // If the deleted address was the default, promote the next one so
+  // there's always a clear default once at least one address is saved.
+  if (list.length && !list.some((item) => item.isDefault)) {
+    list[0] = { ...list[0], isDefault: true }
+  }
+
+  return persistAddresses(userId, list)
+}
+
+export function setDefaultAddress(userId, addressId) {
+  if (!userId) return []
+  const list = getSavedAddresses(userId).map((item) => ({
+    ...item,
+    isDefault: item.id === addressId,
+  }))
+
+  return persistAddresses(userId, list)
+}

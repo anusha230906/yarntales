@@ -15,13 +15,16 @@ import {
   createCustomization,
   getCustomizationTemplate,
   createGiftRequest,
-  createOrder,
   createPaymentOrder,
   verifyPayment,
   loadRazorpayCheckout,
   getOrders,
   getOrderTracking,
   clearSession,
+  getSavedAddresses,
+  saveAddress,
+  deleteAddress,
+  setDefaultAddress,
 } from './services/api'
 import './App.css'
 import { resolveAsset } from './services/assets'
@@ -340,21 +343,15 @@ const handlePlaceOrder = async (shippingAddress) => {
   try {
     let result
 
-    const paymentMethod = shippingAddress?.paymentMethod || 'Cash on Delivery'
+    // Cash on Delivery has been removed from checkout — every order now
+    // goes through Razorpay, so this always resolves to an online method.
+    const paymentMethod = shippingAddress?.paymentMethod || 'UPI'
     const orderItems = cart.map((item) => ({
       productId: item.id,
       quantity: item.quantity,
     }))
 
-    if (paymentMethod === 'Cash on Delivery') {
-      result = await createOrder({
-        userId: currentUserId,
-        shippingAddress,
-        items: orderItems,
-        paymentMethod,
-        paymentStatus: 'pending',
-      })
-    } else {
+    {
       await loadRazorpayCheckout()
 
       const paymentOrder = await createPaymentOrder({
@@ -444,11 +441,7 @@ const handlePlaceOrder = async (shippingAddress) => {
     setLastOrderId(result.order.orderId)
     await refreshUserData(user)
     setCart([])
-    notify(
-      paymentMethod === 'Cash on Delivery'
-        ? 'Order placed · Cash on Delivery ♡'
-        : 'Payment successful · order placed ♡'
-    )
+    notify('Payment successful · order placed ♡')
     navigate('tracking')
   } catch (error) {
     notify(error.message || 'Unable to complete your order')
@@ -611,6 +604,7 @@ const handleAuth = async (payload) => {
             navigate={navigate}
             notify={notify}
             onPlaceOrder={handlePlaceOrder}
+            userId={currentUserId}
           />
         )}
 
@@ -647,6 +641,14 @@ const handleAuth = async (payload) => {
             orderCount={orders.length}
             navigate={navigate}
             signOut={signOut}
+          />
+        )}
+
+        {view === 'addresses' && (
+          <AddressesPage
+            userId={currentUserId}
+            navigate={navigate}
+            notify={notify}
           />
         )}
 
@@ -2110,13 +2112,42 @@ function CheckoutPage({
   navigate,
   notify,
   onPlaceOrder,
+  userId,
 }) {
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [address, setAddress] = useState('')
-  const [city, setCity] = useState('')
-  const [pincode, setPincode] = useState('')
+  const [savedAddresses, setSavedAddresses] = useState(() => getSavedAddresses(userId))
+  const defaultAddress = savedAddresses.find((item) => item.isDefault) || savedAddresses[0]
+
+  const [selectedAddressId, setSelectedAddressId] = useState(defaultAddress?.id || 'new')
+  const [name, setName] = useState(defaultAddress?.name || '')
+  const [phone, setPhone] = useState(defaultAddress?.phone || '')
+  const [address, setAddress] = useState(defaultAddress?.address || '')
+  const [city, setCity] = useState(defaultAddress?.city || '')
+  const [state, setState] = useState(defaultAddress?.state || '')
+  const [pincode, setPincode] = useState(defaultAddress?.pincode || '')
+  const [saveThisAddress, setSaveThisAddress] = useState(savedAddresses.length === 0)
   const [payment, setPayment] = useState('UPI')
+
+  const applyAddress = (item) => {
+    setSelectedAddressId(item.id)
+    setName(item.name)
+    setPhone(item.phone)
+    setAddress(item.address)
+    setCity(item.city)
+    setState(item.state)
+    setPincode(item.pincode)
+    setSaveThisAddress(false)
+  }
+
+  const useNewAddress = () => {
+    setSelectedAddressId('new')
+    setName('')
+    setPhone('')
+    setAddress('')
+    setCity('')
+    setState('')
+    setPincode('')
+    setSaveThisAddress(true)
+  }
 
   const submitOrder = async () => {
     if (
@@ -2125,10 +2156,24 @@ function CheckoutPage({
       !/^\d{10}$/.test(phone) ||
       !address.trim() ||
       !city.trim() ||
-      !pincode.trim()
+      !state.trim() ||
+      !/^\d{6}$/.test(pincode.trim())
     ) {
-      notify('Please enter a valid 10-digit mobile number and complete all delivery details')
+      notify('Please enter a valid 10-digit mobile number, a 6-digit pincode and complete all delivery details')
       return
+    }
+
+    if (saveThisAddress && userId) {
+      const updated = saveAddress(userId, {
+        id: selectedAddressId === 'new' ? undefined : selectedAddressId,
+        name: name.trim(),
+        phone: phone.trim(),
+        address: address.trim(),
+        city: city.trim(),
+        state: state.trim(),
+        pincode: pincode.trim(),
+      })
+      setSavedAddresses(updated)
     }
 
     await onPlaceOrder({
@@ -2137,7 +2182,7 @@ function CheckoutPage({
       address: address.trim(),
       city: city.trim(),
       pincode: pincode.trim(),
-      state: 'Maharashtra',
+      state: state.trim(),
       paymentMethod: payment,
     })
   }
@@ -2157,6 +2202,34 @@ function CheckoutPage({
             <span className="step-mini">01</span>
 
             <h2>Delivery details</h2>
+
+            {savedAddresses.length > 0 && (
+              <div className="payment-list" style={{ marginBottom: '1rem' }}>
+                {savedAddresses.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={selectedAddressId === item.id ? 'selected' : ''}
+                    onClick={() => applyAddress(item)}
+                  >
+                    <span>
+                      {item.name} · {item.address}, {item.city} - {item.pincode}
+                      {item.isDefault ? ' (default)' : ''}
+                    </span>
+                    <small>{selectedAddressId === item.id ? '●' : '○'}</small>
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  className={selectedAddressId === 'new' ? 'selected' : ''}
+                  onClick={useNewAddress}
+                >
+                  <span>Use a new address</span>
+                  <small>{selectedAddressId === 'new' ? '●' : '○'}</small>
+                </button>
+              </div>
+            )}
 
             <div className="field-grid">
               <input
@@ -2191,11 +2264,28 @@ function CheckoutPage({
               />
 
               <input
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                placeholder="State"
+              />
+
+              <input
                 value={pincode}
-                onChange={(e) => setPincode(e.target.value)}
+                onChange={(e) => setPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="Pincode"
+                inputMode="numeric"
+                maxLength={6}
               />
             </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <input
+                type="checkbox"
+                checked={saveThisAddress}
+                onChange={(e) => setSaveThisAddress(e.target.checked)}
+              />
+              Save this address for next time
+            </label>
           </div>
 
           <div className="form-card">
@@ -2207,7 +2297,6 @@ function CheckoutPage({
               {[
                 'UPI',
                 'Card',
-                'Cash on Delivery',
               ].map((item) => (
                 <button
                   key={item}
@@ -2796,7 +2885,7 @@ function ProfilePage({
           My Custom Pieces <span>→</span>
         </button>
 
-        <button>
+        <button onClick={() => navigate('addresses')}>
           Saved Addresses <span>→</span>
         </button>
 
@@ -2910,6 +2999,209 @@ function AccountSettingsPage({ user, setUser, navigate, notify }) {
           </button>
         </div>
       </form>
+    </main>
+  )
+}
+
+
+function emptyAddressForm() {
+  return { name: '', phone: '', address: '', city: '', state: '', pincode: '' }
+}
+
+function AddressesPage({ userId, navigate, notify }) {
+  const [addresses, setAddresses] = useState(() => getSavedAddresses(userId))
+  const [editingId, setEditingId] = useState(null)
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState(emptyAddressForm())
+
+  const startAdd = () => {
+    setForm(emptyAddressForm())
+    setEditingId(null)
+    setShowForm(true)
+  }
+
+  const startEdit = (item) => {
+    setForm({
+      name: item.name,
+      phone: item.phone,
+      address: item.address,
+      city: item.city,
+      state: item.state,
+      pincode: item.pincode,
+    })
+    setEditingId(item.id)
+    setShowForm(true)
+  }
+
+  const handleSave = (e) => {
+    e.preventDefault()
+
+    if (
+      !form.name.trim() ||
+      !/^\d{10}$/.test(form.phone) ||
+      !form.address.trim() ||
+      !form.city.trim() ||
+      !form.state.trim() ||
+      !/^\d{6}$/.test(form.pincode)
+    ) {
+      notify('Please fill every field with a valid 10-digit phone and 6-digit pincode')
+      return
+    }
+
+    const saved = saveAddress(userId, { ...form, id: editingId })
+    setAddresses(saved)
+    setShowForm(false)
+    setEditingId(null)
+    notify(editingId ? 'Address updated ✨' : 'Address saved ✨')
+  }
+
+  const handleDelete = (id) => {
+    setAddresses(deleteAddress(userId, id))
+    notify('Address removed')
+  }
+
+  const handleSetDefault = (id) => {
+    setAddresses(setDefaultAddress(userId, id))
+  }
+
+  return (
+    <main className="page-section">
+      <button className="back-link" onClick={() => navigate('profile')}>
+        ← Back to My Page
+      </button>
+
+      <div className="page-intro">
+        <span className="eyebrow">✦ MY ADDRESSES</span>
+        <h1>Saved addresses.</h1>
+        <p>Save a few delivery addresses so checkout only takes a moment.</p>
+      </div>
+
+      {addresses.length > 0 && !showForm && (
+        <div className="builder-controls" style={{ maxWidth: 480, gap: '1rem' }}>
+          {addresses.map((item) => (
+            <div key={item.id} className="form-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <div>
+                  <b>{item.name}</b>{' '}
+                  {item.isDefault && <span className="step-mini">DEFAULT</span>}
+                  <p style={{ margin: '0.35rem 0 0' }}>
+                    {item.address}, {item.city}, {item.state} - {item.pincode}
+                  </p>
+                  <p style={{ margin: '0.25rem 0 0' }}>{item.phone}</p>
+                </div>
+              </div>
+
+              <div className="builder-bottom" style={{ marginTop: '0.75rem' }}>
+                {!item.isDefault && (
+                  <button type="button" className="mini-link" onClick={() => handleSetDefault(item.id)}>
+                    Set as default
+                  </button>
+                )}
+                <button type="button" className="mini-link" onClick={() => startEdit(item)}>
+                  Edit
+                </button>
+                <button type="button" className="mini-link" onClick={() => handleDelete(item.id)}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!showForm && (
+        <button className="primary-cta" style={{ marginTop: '1rem' }} onClick={startAdd}>
+          + Add a new address
+        </button>
+      )}
+
+      {showForm && (
+        <form className="builder-controls" onSubmit={handleSave} style={{ maxWidth: 480 }}>
+          <BuilderStep number="01" title="Full name">
+            <input
+              className="wide-input"
+              value={form.name}
+              onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))}
+              placeholder="Full name"
+            />
+          </BuilderStep>
+
+          <BuilderStep number="02" title="Phone">
+            <input
+              className="wide-input"
+              value={form.phone}
+              onChange={(e) => setForm((c) => ({ ...c, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+              placeholder="10-digit mobile number"
+              inputMode="numeric"
+              maxLength={10}
+            />
+          </BuilderStep>
+
+          <BuilderStep number="03" title="Address">
+            <input
+              className="wide-input"
+              value={form.address}
+              onChange={(e) => setForm((c) => ({ ...c, address: e.target.value }))}
+              placeholder="House no., street, area"
+            />
+          </BuilderStep>
+
+          <BuilderStep number="04" title="City">
+            <input
+              className="wide-input"
+              value={form.city}
+              onChange={(e) => setForm((c) => ({ ...c, city: e.target.value }))}
+              placeholder="City"
+            />
+          </BuilderStep>
+
+          <BuilderStep number="05" title="State">
+            <input
+              className="wide-input"
+              value={form.state}
+              onChange={(e) => setForm((c) => ({ ...c, state: e.target.value }))}
+              placeholder="State"
+            />
+          </BuilderStep>
+
+          <BuilderStep number="06" title="Pincode">
+            <input
+              className="wide-input"
+              value={form.pincode}
+              onChange={(e) => setForm((c) => ({ ...c, pincode: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+              placeholder="6-digit pincode"
+              inputMode="numeric"
+              maxLength={6}
+            />
+          </BuilderStep>
+
+          <div className="builder-bottom">
+            <button
+              type="button"
+              className="mini-link"
+              onClick={() => {
+                setShowForm(false)
+                setEditingId(null)
+              }}
+            >
+              Cancel
+            </button>
+
+            <button type="submit" className="primary-cta">
+              {editingId ? 'Save changes' : 'Save address'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {addresses.length === 0 && !showForm && (
+        <EmptyState
+          title="No saved addresses yet."
+          text="Add one so checkout remembers it next time."
+          action="Add an address"
+          onAction={startAdd}
+        />
+      )}
     </main>
   )
 }

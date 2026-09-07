@@ -1074,7 +1074,7 @@ def create_order():
 
         payment_method = data.get(
             "paymentMethod",
-            "Cash on Delivery"
+            "UPI"
         )
 
         payment_status = data.get(
@@ -1086,19 +1086,28 @@ def create_order():
             "paymentReference"
         )
 
-        if payment_method != "Cash on Delivery":
-            verified_payment = db.payment_transactions.find_one({
-                "razorpayPaymentId": str(payment_reference),
-                "status": "verified",
-                "userId": mongo_user_id,
-            }) if payment_reference else None
+        # Cash on Delivery has been discontinued as a payment method.
+        # Every order must be backed by a verified Razorpay payment
+        # regardless of what a caller sends here, so this endpoint can't
+        # be used to bypass payment. (In the normal flow this route
+        # isn't even hit for online payments — /api/payment/verify
+        # creates the order once Razorpay confirms payment — but we
+        # still guard it here in case it's called directly.)
+        if payment_method == "Cash on Delivery":
+            return jsonify({
+                "error": "Cash on Delivery is no longer supported. Please pay via UPI or Card."
+            }), 400
 
-            if payment_status != "paid" or not verified_payment:
-                return jsonify({
-                    "error": "Online payment must be verified before creating the order"
-                }), 400
-        else:
-            payment_status = "pending"
+        verified_payment = db.payment_transactions.find_one({
+            "razorpayPaymentId": str(payment_reference),
+            "status": "verified",
+            "userId": mongo_user_id,
+        }) if payment_reference else None
+
+        if payment_status != "paid" or not verified_payment:
+            return jsonify({
+                "error": "Online payment must be verified before creating the order"
+            }), 400
 
         # ----------------------------------------------------
         # ORDER
