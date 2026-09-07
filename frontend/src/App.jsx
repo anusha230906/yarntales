@@ -31,6 +31,33 @@ import { resolveAsset } from './services/assets'
 
 const IG_URL = 'https://www.instagram.com/yarntalesbyaniiii/?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw=='
 const money = (value) => `₹${Number(value).toLocaleString('en-IN')}`
+
+const BESTSELLER_NAMES = new Set([
+  'Macramé Bag',
+  'Sunflower Keychain',
+  'Panda Keychain',
+  'Tulip Keychain',
+  'Bee Keychain',
+  'Cherry Keychain',
+  'Blue Macramé Bag',
+])
+
+const CATEGORY_IMAGES = {
+  Bags: '/src/assets/category-bags.jpg',
+  Keychains: '/src/assets/category-keychains.jpg',
+  Pouches: '/src/assets/category-pouches.jpg',
+  Accessories: '/src/assets/category-accessories.jpg',
+  Everyday: '/src/assets/category-everyday.jpg',
+  Wearables: '/src/assets/category-wearables.jpg',
+  Custom: '/src/assets/category-custom.jpg',
+}
+
+const productBadge = (product) => {
+  if (BESTSELLER_NAMES.has(product?.name)) return 'Bestseller'
+  if (product?.name === 'BTS Bag' || product?.name === 'Cute Bow Bag (Small)') return 'Gift pick'
+  return ''
+}
+
 let catalogProducts = initialProducts
 
 function App() {
@@ -50,6 +77,7 @@ function App() {
   const [selectedProduct, setSelectedProduct] = useState(initialProducts[0])
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('All')
+  const [shopSort, setShopSort] = useState('Featured')
   const [toast, setToast] = useState('')
   const [mobileMenu, setMobileMenu] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -529,6 +557,8 @@ const handleAuth = async (payload) => {
             setSearch={setSearch}
             categoryFilter={categoryFilter}
             setCategoryFilter={setCategoryFilter}
+            sortBy={shopSort}
+            setSortBy={setShopSort}
             wishlist={wishlist}
             addToCart={addToCart}
             toggleWishlist={toggleWishlist}
@@ -616,7 +646,7 @@ const handleAuth = async (payload) => {
         )}
 
         {view === 'inquiry' && (
-          <InquiryPage product={selectedProduct} />
+          <InquiryPage product={selectedProduct} instagramUrl={IG_URL} />
         )}
 
         {/* NEW: INFORMATION PAGES */}
@@ -631,6 +661,14 @@ const handleAuth = async (payload) => {
 
         {view === 'returns' && (
           <ReturnsPage />
+        )}
+
+        {view === 'about' && (
+          <AboutPage navigate={navigate} />
+        )}
+
+        {view === 'faq' && (
+          <FaqPage />
         )}
 
         {view === 'profile' && (
@@ -947,12 +985,41 @@ function HomePage({
   toggleWishlist,
   openProduct,
 }) {
-  const featureProducts = [
-    catalogProducts[0],
-    catalogProducts[2],
-    catalogProducts[12],
-    catalogProducts[16],
+  const bestSellers = catalogProducts.filter((product) =>
+    BESTSELLER_NAMES.has(product.name),
+  )
+  const freshPicks = catalogProducts.slice(-4).reverse()
+  const occasionCollections = [
+    {
+      title: 'For your bestie',
+      text: 'Tiny thoughtful gifts for your favourite person.',
+      image: 'cherry-keychain.jpg',
+      names: ['Cherry Keychain', 'Cute Bow Bag (Small)', 'Bandana'],
+    },
+    {
+      title: 'Little gifts',
+      text: 'Cute little things that are easy to love.',
+      image: 'sunflower-keychain.jpg',
+      names: ['Sunflower Keychain', 'Panda Keychain', 'Bee Keychain'],
+    },
+    {
+      title: 'Everyday cozy',
+      text: 'Useful handmade pieces you will actually carry.',
+      image: 'bottle-sleeve.jpg',
+      names: ['Bottle Cover', 'Card Pouch', 'Small Flower Bag'],
+    },
+    {
+      title: 'Cold-day comfort',
+      text: 'Soft crochet details for slower, cozier days.',
+      image: 'black-flower-scarf.jpg',
+      names: ['Cute Muffler', 'Tulip Headband', 'Pencil / Money Pouch'],
+    },
   ]
+
+  const openCollection = (names) => {
+    const product = catalogProducts.find((item) => names.includes(item.name))
+    if (product) openProduct(product)
+  }
 
   return (
     <main>
@@ -1040,20 +1107,75 @@ function HomePage({
         <div>♡ gift a little joy</div>
       </section>
 
-      <section className="home-section cream">
+      <section className="trust-strip">
+        <div className="trust-item">
+          <span>♡</span>
+          <div>
+            <b>100% Handmade</b>
+            <small>made in small batches</small>
+          </div>
+        </div>
+        <div className="trust-divider" />
+        <div className="trust-item">
+          <span>🎁</span>
+          <div>
+            <b>Gift Ready</b>
+            <small>thoughtful little details</small>
+          </div>
+        </div>
+        <div className="trust-divider" />
+        <div className="trust-item">
+          <span>📦</span>
+          <div>
+            <b>India-wide Delivery</b>
+            <small>carefully packed & sent</small>
+          </div>
+        </div>
+        <div className="trust-divider" />
+        <div className="trust-item">
+          <span>🔒</span>
+          <div>
+            <b>Secure Payments</b>
+            <small>UPI & card checkout</small>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-section pinkwash">
         <SectionHeader
-          title="The little favourites"
-          subtitle="Things that look even cuter off-screen."
-          action="Shop all"
+          title="Bestsellers"
+          subtitle="The little pieces people keep coming back for."
+          action="View all"
           onAction={() => navigate('shop')}
         />
 
-        <div className="featured-grid">
-          {featureProducts.map((product, index) => (
+        <div className="merch-grid">
+          {bestSellers.slice(0, 6).map((product) => (
             <PinterestCard
               key={product.id}
               product={product}
-              tall={index === 0 || index === 3}
+              wishlist={wishlist}
+              addToCart={addToCart}
+              toggleWishlist={toggleWishlist}
+              openProduct={openProduct}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="home-section cream">
+        <SectionHeader
+          title="Fresh little finds"
+          subtitle="A few pieces to put on your radar."
+          action="Shop the collection"
+          onAction={() => navigate('shop')}
+        />
+
+        <div className="merch-grid">
+          {freshPicks.map((product) => (
+            <PinterestCard
+              key={product.id}
+              product={product}
               wishlist={wishlist}
               addToCart={addToCart}
               toggleWishlist={toggleWishlist}
@@ -1065,31 +1187,26 @@ function HomePage({
 
       <section className="home-section pinkwash">
         <SectionHeader
-          title="Pick your vibe"
-          subtitle="A little corner for every kind of cozy."
+          title="Shop by occasion"
+          subtitle="A little corner for every kind of gifting."
         />
 
-        <div className="category-grid home-category">
-          {categories.map((category) => (
+        <div className="occasion-grid">
+          {occasionCollections.map((collection) => (
             <button
-              key={category.title}
-              className="category-card"
-              onClick={() =>
-                category.title === 'Custom'
-                  ? navigate('custom')
-                  : navigate('shop')
-              }
+              key={collection.title}
+              className="occasion-card"
+              onClick={() => openCollection(collection.names)}
             >
-              <span className={`category-art ${category.tone}`}>
-                {category.icon}
+              <img
+                src={resolveAsset(`/src/assets/${collection.image}`)}
+                alt={collection.title}
+              />
+              <span className="occasion-overlay">
+                <b>{collection.title}</b>
+                <small>{collection.text}</small>
+                <em>Explore →</em>
               </span>
-
-              <span className="category-copy">
-                <b>{category.title}</b>
-                <small>{category.text}</small>
-              </span>
-
-              <span className="arrow">↗</span>
             </button>
           ))}
         </div>
@@ -1117,11 +1234,17 @@ function HomePage({
             with real yarn, little details and a lot of care.
           </p>
 
+          <div className="story-points">
+            <span>✓ Small-batch handmade</span>
+            <span>✓ Thoughtful gifting</span>
+            <span>✓ Custom pieces available</span>
+          </div>
+
           <button
             className="soft-cta"
-            onClick={() => navigate('custom')}
+            onClick={() => navigate('about')}
           >
-            Make something personal →
+            Meet YarnTales →
           </button>
         </div>
       </section>
@@ -1222,7 +1345,7 @@ function HomePage({
         <div>
           <span className="eyebrow">✦ THE COZY CLUB</span>
           <h2>A little love in your inbox.</h2>
-          <p>New drops, cute gift ideas and 10% off your first order.</p>
+          <p>New drops, cozy gift ideas and studio notes.</p>
         </div>
 
         <form
@@ -1251,11 +1374,14 @@ function HomePage({
 }
 
 
+
 function ShopPage({
   search,
   setSearch,
   categoryFilter,
   setCategoryFilter,
+  sortBy,
+  setSortBy,
   wishlist,
   addToCart,
   toggleWishlist,
@@ -1310,7 +1436,7 @@ function ShopPage({
     setActiveColours([])
   }
 
-  const list = catalogProducts.filter((product) => {
+  const filteredProducts = catalogProducts.filter((product) => {
     const categoryOk =
       categoryFilter === 'All' ||
       product.category === categoryFilter
@@ -1329,9 +1455,24 @@ function ShopPage({
 
     const colourOk =
       !activeColours.length ||
-      activeColours.some((colour) => (product.colors || []).includes(colour))
+      activeColours.some((colour) =>
+        (product.colors || []).some(
+          (productColour) =>
+            productColour.toLowerCase().includes(colour.toLowerCase()),
+        ),
+      )
 
     return categoryOk && searchOk && priceOk && colourOk
+  })
+
+  const list = [...filteredProducts].sort((a, b) => {
+    if (sortBy === 'Price: Low → High') return a.price - b.price
+    if (sortBy === 'Price: High → Low') return b.price - a.price
+    if (sortBy === 'Newest') {
+      return catalogProducts.indexOf(b) - catalogProducts.indexOf(a)
+    }
+    if (sortBy === 'Rating') return Number(b.rating) - Number(a.rating)
+    return 0
   })
 
   return (
@@ -1356,6 +1497,24 @@ function ShopPage({
               {filter}
             </button>
           ))}
+        </div>
+
+        <div className="shop-toolbar-actions">
+          <span className="result-count">{list.length} pieces</span>
+
+          <label className="sort-select">
+            <span>Sort</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option>Featured</option>
+              <option>Newest</option>
+              <option>Rating</option>
+              <option>Price: Low → High</option>
+              <option>Price: High → Low</option>
+            </select>
+          </label>
         </div>
 
         <label className="shop-search">
@@ -1477,7 +1636,12 @@ function ProductPage({
         </div>
 
         <div className="product-info">
-          <span className="product-label">✦ made with love</span>
+          <div className="product-kicker-row">
+            <span className="product-label">✦ made with love</span>
+            {productBadge(product) && (
+              <span className="product-badge strong">{productBadge(product)}</span>
+            )}
+          </div>
 
           <h1>{product.name}</h1>
 
@@ -1545,6 +1709,30 @@ function ProductPage({
             >
               {saved ? '♥' : '♡'}
             </button>
+          </div>
+
+          <div className="delivery-card">
+            <div>
+              <span>🚚</span>
+              <div>
+                <b>India-wide delivery</b>
+                <small>Ready-to-ship: 2–4 business days to process, then approx. 3–7 business days in transit.</small>
+              </div>
+            </div>
+            <div>
+              <span>🧶</span>
+              <div>
+                <b>Made-to-order pieces</b>
+                <small>Custom orders may take 7–14 business days before dispatch.</small>
+              </div>
+            </div>
+            <div>
+              <span>🔒</span>
+              <div>
+                <b>Secure checkout</b>
+                <small>Pay safely with UPI or card through Razorpay.</small>
+              </div>
+            </div>
           </div>
 
           <div className="accordion">
@@ -2816,6 +3004,116 @@ function ReturnsPage() {
 }
 
 
+function AboutPage({ navigate }) {
+  return (
+    <main className="page-section">
+      <section className="info-hero about-hero">
+        <div>
+          <span className="eyebrow">✦ ABOUT YARNTales</span>
+          <h1>Every stitch has a story.</h1>
+          <p>
+            Welcome to <strong>YarnTales</strong>, a place where creativity begins
+            with a simple strand of yarn.
+          </p>
+        </div>
+      </section>
+
+      <section className="about-copy">
+        <p>
+          YarnTales is an online platform created for yarn lovers, crochet
+          enthusiasts, and anyone who enjoys turning simple materials into
+          something beautiful. We offer a collection of yarn and crafting
+          essentials designed to inspire creativity and make every project a
+          little more special.
+        </p>
+
+        <p>
+          We believe that every handmade creation has a story behind it — from
+          the first stitch to the final piece. Whether you are making a cozy
+          scarf, a cute crochet accessory, or exploring a new creative hobby,
+          YarnTales is here to be a part of your crafting journey.
+        </p>
+      </section>
+
+      <section className="mission-card">
+        <div>
+          <span className="eyebrow">✦ OUR MISSION</span>
+          <h2>Make creativity easy to discover — and lovely to live with.</h2>
+          <p>
+            Our goal is to make quality yarn and crafting supplies easy to
+            discover and purchase, while creating a simple and enjoyable
+            shopping experience for every customer.
+          </p>
+        </div>
+
+        <div className="mission-note">
+          <span>🧶</span>
+          <p>
+            At YarnTales, <strong>every stitch tells a story, and every creation
+            has a tale of its own.</strong>
+          </p>
+        </div>
+      </section>
+
+      <div className="info-cta">
+        <div>
+          <span className="eyebrow">✦ KEEP CREATING</span>
+          <h2>Find your next little project.</h2>
+          <p>Browse the collection or make something personal in Custom Corner.</p>
+        </div>
+
+        <button className="primary-cta" onClick={() => navigate('shop')}>
+          Explore YarnTales →
+        </button>
+      </div>
+    </main>
+  )
+}
+
+function FaqPage() {
+  const items = [
+    {
+      q: 'How long does delivery take?',
+      a: 'Ready-to-ship products usually need 2–4 business days for processing, followed by approximately 3–7 business days in transit. Custom or made-to-order pieces may need 7–14 business days before dispatch.',
+    },
+    {
+      q: 'Do you deliver across India?',
+      a: 'Yes. YarnTales currently delivers across India. International shipping is not currently available.',
+    },
+    {
+      q: 'Can I return a customized order?',
+      a: 'Customized and personalized products are non-returnable under the current returns policy. Wrong, damaged, defective or substantially different items may be considered for return.',
+    },
+    {
+      q: 'Can I save an address?',
+      a: 'Yes. Your YarnTales account includes Saved Addresses, which can be reused during checkout.',
+    },
+    {
+      q: 'How do I ask about a product?',
+      a: 'Use the product inquiry button and message YarnTales on Instagram for questions about colour, size or making time.',
+    },
+  ]
+
+  return (
+    <main className="page-section narrow">
+      <div className="page-intro">
+        <span className="eyebrow">✦ QUESTIONS</span>
+        <h1>Frequently asked things.</h1>
+        <p>Everything you need before you place an order.</p>
+      </div>
+
+      <div className="faq-list">
+        {items.map((item) => (
+          <details key={item.q} className="faq-item">
+            <summary>{item.q}</summary>
+            <p>{item.a}</p>
+          </details>
+        ))}
+      </div>
+    </main>
+  )
+}
+
 /* =========================================================
    EXISTING PROFILE / PRODUCT / COMMON COMPONENTS
    ========================================================= */
@@ -3232,6 +3530,12 @@ function PinterestCard({
           alt={product.name}
         />
 
+        {productBadge(product) && (
+          <span className="product-badge">
+            {productBadge(product)}
+          </span>
+        )}
+
         <span
           className="heart-button"
           onClick={(e) => {
@@ -3345,7 +3649,7 @@ function EmptyState({
 }
 
 
-function InquiryPage({ product }) {
+function InquiryPage({ product, instagramUrl }) {
   const [message, setMessage] = useState('')
 
   return (
@@ -3381,12 +3685,14 @@ function InquiryPage({ product }) {
           />
         </label>
 
-        <button
-          className="primary-cta"
-          onClick={() => setMessage('')}
+        <a
+          className="primary-cta inquiry-link"
+          href={instagramUrl}
+          target="_blank"
+          rel="noreferrer"
         >
-          Send message ♡
-        </button>
+          Ask on Instagram ↗
+        </a>
       </div>
     </main>
   )
@@ -3465,6 +3771,14 @@ function Footer({
       <div>
         <h4>Resources</h4>
 
+        <button onClick={() => navigate('about')}>
+          About YarnTales
+        </button>
+
+        <button onClick={() => navigate('faq')}>
+          FAQs
+        </button>
+
         <button onClick={onPalette}>
           Colour Palette
         </button>
@@ -3486,7 +3800,7 @@ function Footer({
           target="_blank"
           rel="noreferrer"
         >
-          @yarntalesbyaniiii
+          Contact on Instagram ↗
         </a>
       </div>
     </footer>
