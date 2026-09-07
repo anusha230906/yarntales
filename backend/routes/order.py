@@ -285,12 +285,13 @@ def send_new_order_email(order, user):
 
             return False
 
-        # A customer email is required for the confirmation email.
-        customer_email = user.get("email", "")
-        if not customer_email or "@" not in str(customer_email):
+        if not ADMIN_EMAIL:
+
             print(
-                "Order email skipped: customer email is missing or invalid."
+                "Order email skipped: "
+                "ADMIN_EMAIL is not configured."
             )
+
             return False
 
         # ----------------------------------------------------
@@ -307,7 +308,7 @@ def send_new_order_email(order, user):
 
         customer_email = user.get(
             "email",
-            ""
+            "Not provided"
         )
 
         # ----------------------------------------------------
@@ -469,11 +470,11 @@ def send_new_order_email(order, user):
                 ">
 
                     <h1 style="margin:0;">
-                        🧶 Your YarnTales Order is Confirmed!
+                        🧶 New YarnTales Order
                     </h1>
 
                     <p style="margin:8px 0 0;">
-                        Thank you for shopping with YarnTales. Your order has been successfully placed.
+                        A new order has been placed.
                     </p>
 
                 </div>
@@ -498,13 +499,18 @@ def send_new_order_email(order, user):
                     <hr>
 
 
+                    <h2>
+                        Customer
+                    </h2>
+
                     <p>
-                        Hi <strong>{customer_name}</strong>,
+                        <strong>Name:</strong>
+                        {customer_name}
                     </p>
 
                     <p>
-                        We have received your order and payment successfully.
-                        Your current order status is <strong>Order Confirmed</strong>.
+                        <strong>Email:</strong>
+                        {customer_email}
                     </p>
 
                     <hr>
@@ -644,17 +650,11 @@ def send_new_order_email(order, user):
         # Send using Resend API
         # ----------------------------------------------------
 
-        recipients = [str(customer_email)]
-
-        # Keep the existing admin notification as well, when configured.
-        if ADMIN_EMAIL and str(ADMIN_EMAIL).lower() != str(customer_email).lower():
-            recipients.append(str(ADMIN_EMAIL))
-
         params = {
             "from": RESEND_FROM_EMAIL,
-            "to": recipients,
+            "to": [ADMIN_EMAIL],
             "subject": (
-                f"🧶 YarnTales Order Confirmed - {order_id}"
+                f"🧶 New YarnTales Order - {order_id}"
             ),
             "html": html
         }
@@ -664,7 +664,7 @@ def send_new_order_email(order, user):
         )
 
         print(
-            "Order confirmation email sent successfully:",
+            "Order email sent successfully:",
             email
         )
 
@@ -1074,7 +1074,7 @@ def create_order():
 
         payment_method = data.get(
             "paymentMethod",
-            "UPI"
+            "Cash on Delivery"
         )
 
         payment_status = data.get(
@@ -1086,28 +1086,19 @@ def create_order():
             "paymentReference"
         )
 
-        # Cash on Delivery has been discontinued as a payment method.
-        # Every order must be backed by a verified Razorpay payment
-        # regardless of what a caller sends here, so this endpoint can't
-        # be used to bypass payment. (In the normal flow this route
-        # isn't even hit for online payments — /api/payment/verify
-        # creates the order once Razorpay confirms payment — but we
-        # still guard it here in case it's called directly.)
-        if payment_method == "Cash on Delivery":
-            return jsonify({
-                "error": "Cash on Delivery is no longer supported. Please pay via UPI or Card."
-            }), 400
+        if payment_method != "Cash on Delivery":
+            verified_payment = db.payment_transactions.find_one({
+                "razorpayPaymentId": str(payment_reference),
+                "status": "verified",
+                "userId": mongo_user_id,
+            }) if payment_reference else None
 
-        verified_payment = db.payment_transactions.find_one({
-            "razorpayPaymentId": str(payment_reference),
-            "status": "verified",
-            "userId": mongo_user_id,
-        }) if payment_reference else None
-
-        if payment_status != "paid" or not verified_payment:
-            return jsonify({
-                "error": "Online payment must be verified before creating the order"
-            }), 400
+            if payment_status != "paid" or not verified_payment:
+                return jsonify({
+                    "error": "Online payment must be verified before creating the order"
+                }), 400
+        else:
+            payment_status = "pending"
 
         # ----------------------------------------------------
         # ORDER
